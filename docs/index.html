@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pearl OTC — Settled Trade Tracer</title>
+<meta name="description" content="Who buys / who sells on pearl-otc.com — EVM and Pearl addresses traced from settled trades." />
+<link rel="stylesheet" href="style.css" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">pearl<span class="slash">/</span>otc</span>
+    <span class="sub">settled-trade tracer · EVM ↔ Pearl</span>
+  </div>
+  <div class="freshness" id="freshness">loading…</div>
+</header>
+
+<section class="kpis" id="kpis"></section>
+
+<nav class="tabs">
+  <a href="#trades" class="tab" data-tab="trades">Trades</a>
+  <a href="#addresses" class="tab" data-tab="addresses">Addresses</a>
+  <a href="#charts" class="tab" data-tab="charts">Charts</a>
+  <a href="#about" class="tab" data-tab="about">About</a>
+</nav>
+
+<main>
+  <!-- TRADES -->
+  <section id="view-trades" class="view">
+    <div class="filters">
+      <input id="f-search" type="search" placeholder="search address / txid / trade id" />
+      <select id="f-status"><option value="">all status</option></select>
+      <select id="f-side"><option value="">all sides</option>
+        <option value="SELL_PRL">SELL_PRL</option>
+        <option value="BUY_PRL">BUY_PRL</option></select>
+      <select id="f-network"><option value="">all networks</option>
+        <option value="ARBITRUM">ARBITRUM</option>
+        <option value="BASE">BASE</option></select>
+      <label class="chk"><input type="checkbox" id="f-resolved" /> traced only</label>
+      <input id="f-from" type="date" title="from date" />
+      <input id="f-to" type="date" title="to date" />
+      <button id="btn-csv" class="btn">Export CSV</button>
+      <span class="count" id="t-count"></span>
+    </div>
+    <div class="tablewrap">
+      <table id="trades-table">
+        <thead><tr>
+          <th data-sort="id">#</th>
+          <th data-sort="time">time</th>
+          <th data-sort="maker_side">side</th>
+          <th data-sort="status">status</th>
+          <th data-sort="network">net</th>
+          <th data-sort="prl_amount" class="num">PRL</th>
+          <th data-sort="usdc_amount" class="num">USDC</th>
+          <th data-sort="price_per_prl_usdc" class="num">price</th>
+          <th>seller (PRL→ / →USDC)</th>
+          <th>buyer (USDC→ / →PRL)</th>
+          <th>txs</th>
+        </tr></thead>
+        <tbody id="trades-body"></tbody>
+      </table>
+    </div>
+    <div class="pager" id="t-pager"></div>
+  </section>
+
+  <!-- ADDRESSES -->
+  <section id="view-addresses" class="view hidden">
+    <div class="filters">
+      <input id="a-search" type="search" placeholder="filter by address" />
+      <select id="a-chain"><option value="">all chains</option>
+        <option value="pearl">pearl</option>
+        <option value="evm">evm</option></select>
+      <select id="a-sort">
+        <option value="volume_prl">sort: total PRL volume</option>
+        <option value="sold_prl">sort: PRL sold</option>
+        <option value="bought_prl">sort: PRL bought</option>
+        <option value="n_trades">sort: trade count</option>
+        <option value="last_seen">sort: most recent</option>
+      </select>
+      <span class="count" id="a-count"></span>
+    </div>
+    <div class="tablewrap">
+      <table id="addr-table">
+        <thead><tr>
+          <th>address</th><th>chain</th>
+          <th class="num">PRL sold</th><th class="num">PRL bought</th>
+          <th class="num">USDC recv</th><th class="num">USDC paid</th>
+          <th class="num">trades</th><th>last seen</th>
+        </tr></thead>
+        <tbody id="addr-body"></tbody>
+      </table>
+    </div>
+    <div class="pager" id="a-pager"></div>
+  </section>
+
+  <!-- ADDRESS DETAIL -->
+  <section id="view-detail" class="view hidden">
+    <button class="btn back" id="btn-back">← back</button>
+    <div id="detail-body"></div>
+  </section>
+
+  <!-- CHARTS -->
+  <section id="view-charts" class="view hidden">
+    <div class="card"><h3>Daily volume</h3><canvas id="chart-vol"></canvas></div>
+    <div class="card"><h3>PRL price (USDC)</h3><canvas id="chart-price"></canvas></div>
+  </section>
+
+  <!-- ABOUT -->
+  <section id="view-about" class="view hidden">
+    <div class="card prose" id="about-body"></div>
+  </section>
+</main>
+
+<footer>
+  <span>Data from public <code>api.pearl-otc.com</code>, Pearl explorer &amp; Arbitrum/Base RPC. Not affiliated with Pearl Research or pearl-otc.com.</span>
+</footer>
+</body>
+</html>

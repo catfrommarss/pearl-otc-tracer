@@ -1,0 +1,54 @@
+name: refresh
+
+on:
+  schedule:
+    # hourly, offset off the top of the hour to dodge peak scheduling load
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: "Full backfill (resolve everything, not just deltas)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r collector/requirements.txt
+
+      - name: Collect + resolve
+        run: |
+          if [ "${{ inputs.backfill }}" = "true" ]; then
+            python collector/collect.py --backfill --workers 6
+          else
+            python collector/collect.py --workers 6
+          fi
+
+      - name: Commit snapshot
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data cache
+          if git diff --cached --quiet; then
+            echo "no changes"
+          else
+            git commit -m "data: refresh snapshot $(date -u +%FT%TZ)"
+            git push
+          fi
