@@ -34,6 +34,12 @@ code{font-family:var(--mono);font-size:.85em;color:var(--ink2)}
 .brand .slash{color:var(--pri)}
 .brand .sub{color:var(--ink3);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
 .freshness{color:var(--ink3);font:11px var(--mono)}
+.topbar-right{display:flex;align-items:center;gap:10px}
+.tz-toggle{background:var(--card);border:1px solid var(--line);color:var(--ink2);
+  font:500 11px var(--mono);padding:3px 9px;border-radius:5px;cursor:pointer;
+  letter-spacing:.04em}
+.tz-toggle:hover{border-color:var(--pri);color:var(--pri)}
+.tz-toggle.local{color:var(--warn);border-color:rgba(251,191,36,.4)}
 
 /* ===== TABS ===== */
 .tabs{display:flex;gap:28px;padding:0 22px;border-bottom:1px solid var(--line)}
@@ -151,11 +157,24 @@ td.time{color:var(--ink3);font:11.5px var(--mono)}
 .net-arb{color:var(--info);font:12px var(--mono)}
 .net-base{color:var(--base);font:12px var(--mono)}
 
-/* seller address stack */
+/* seller / buyer address stack */
 .addr-stack{font:11.5px var(--mono);line-height:1.5}
 .addr-stack .a1{color:var(--ink2)}
 .addr-stack .a2{color:var(--ink3)}
 .addr-stack a:hover{color:var(--pri)}
+
+/* party cell: optional ⓜ maker badge + addr stack, side by side */
+.party{display:flex;gap:6px;align-items:flex-start}
+.maker-tag{display:inline-block;font:600 10px var(--mono);color:var(--warn);
+  border:1px solid rgba(251,191,36,.45);background:rgba(251,191,36,.10);
+  border-radius:3px;padding:1px 4px;line-height:1.2;letter-spacing:.04em;
+  cursor:help;flex-shrink:0;margin-top:1px}
+
+/* hover-highlight: all elements with the same data-addr get an orange
+   dashed outline + tint while one of them is hovered. */
+.addr-hl{background-color:rgba(251,191,36,.10)!important;
+  outline:1px dashed rgba(251,191,36,.7);outline-offset:2px;
+  border-radius:3px}
 
 /* txs cell -- folded "•••" trigger + popover */
 .txs{position:relative;text-align:center}

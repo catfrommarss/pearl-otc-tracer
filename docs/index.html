@@ -8,9 +8,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <meta http-equiv="cache-control" content="no-cache" />
-<link rel="stylesheet" href="style.css?v=t6" />
+<link rel="stylesheet" href="style.css?v=t7" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
-<script src="app.js?v=t6" defer></script>
+<script src="app.js?v=t7" defer></script>
 </head>
 <body>
 <header class="topbar">
@@ -18,7 +18,10 @@
     <span class="logo">pearl<span class="slash">/</span>otc</span>
     <span class="sub">OTC 成交追溯 · EVM ↔ Pearl</span>
   </div>
-  <div class="freshness" id="freshness">加载中…</div>
+  <div class="topbar-right">
+    <button id="btn-tz" class="tz-toggle" title="切换 UTC / 本地时间">UTC</button>
+    <div class="freshness" id="freshness">加载中…</div>
+  </div>
 </header>
 
 <nav class="tabs">
@@ -61,9 +64,9 @@
     <div class="filters">
       <input id="f-search" type="search" placeholder="搜索地址 / txid / 成交 ID" />
       <select id="f-status"><option value="">全部状态</option></select>
-      <select id="f-side"><option value="">全部方向</option>
-        <option value="SELL_PRL">sell</option>
-        <option value="BUY_PRL">buy</option></select>
+      <select id="f-side"><option value="">全部挂单</option>
+        <option value="SELL_PRL">卖单</option>
+        <option value="BUY_PRL">买单</option></select>
       <select id="f-network"><option value="">全部网络</option>
         <option value="ARBITRUM">arb</option>
         <option value="BASE">base</option></select>
@@ -78,13 +81,14 @@
         <thead><tr>
           <th data-sort="id">#</th>
           <th data-sort="time">时间</th>
-          <th data-sort="maker_side">方向</th>
+          <th data-sort="maker_side">挂单</th>
           <th data-sort="status">状态</th>
           <th data-sort="network">网络</th>
           <th data-sort="prl_amount" class="num">PRL</th>
           <th data-sort="usdc_amount" class="num">USDC</th>
           <th data-sort="price_per_prl_usdc" class="num">价格</th>
           <th>卖方</th>
+          <th>买方</th>
           <th>tx</th>
         </tr></thead>
         <tbody id="trades-body"></tbody>

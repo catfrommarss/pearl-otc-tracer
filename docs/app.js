@@ -10,6 +10,24 @@ let tradesChartsDrawn = false;
 const EXP = "https://explorer.pearlresearch.ai";
 const SCAN = { ARBITRUM: "https://arbiscan.io", BASE: "https://basescan.org" };
 
+/* ===== time helpers (UTC <-> local toggle) ===== */
+let tzMode = localStorage.getItem("tz-mode") === "local" ? "local" : "utc";
+function pad2(n) { return String(n).padStart(2, "0"); }
+function formatTime(iso, mode /* 'full' | 'short' */) {
+  if (!iso) return "—";
+  if (tzMode === "utc") {
+    // iso = "2026-05-19T14:56:17.123Z"
+    const s = iso.slice(0, 19).replace("T", " ");
+    return mode === "short" ? s.slice(5, 16) : s;
+  }
+  const d = new Date(iso);
+  if (isNaN(d)) return "—";
+  const yr = d.getFullYear(), mo = pad2(d.getMonth() + 1), da = pad2(d.getDate());
+  const hr = pad2(d.getHours()), mi = pad2(d.getMinutes());
+  return mode === "short" ? `${mo}-${da} ${hr}:${mi}` : `${yr}-${mo}-${da} ${hr}:${mi}`;
+}
+function tzSuffix() { return tzMode === "utc" ? "UTC" : "本地"; }
+
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
@@ -53,7 +71,9 @@ function addrLink(a, network) {
   const u = chain === "pearl"
     ? `${EXP}/address/${a}?network=mainnet`
     : `${SCAN[network] || SCAN.ARBITRUM}/address/${a}`;
-  return `<a class="addr" href="#address/${a}" title="${a}">${short(a)}</a>`
+  // data-addr lets the hover-highlight handler tag every occurrence of
+  // the same address across the page.
+  return `<a class="addr" data-addr="${a}" href="#address/${a}" title="${a}">${short(a)}</a>`
     + ` <a class="copy" href="${u}" target="_blank" rel="noopener" title="浏览器中打开">↗</a>`
     + ` <span class="copy" data-copy="${a}" title="复制">⧉</span>`;
 }
@@ -69,8 +89,12 @@ function statusCell(st) {
   return `<span class="st">${(st || "").toLowerCase()}</span>`;
 }
 function sideCell(sd) {
-  if (sd === "BUY_PRL")  return `<span class="side-buy">buy</span>`;
-  if (sd === "SELL_PRL") return `<span class="side-sell">sell</span>`;
+  // "side" labels the maker (who posted the offer), not the trade
+  // direction. Use 卖单/买单 (sell-listing / buy-listing) so it can't be
+  // mistaken for "this address bought/sold" — that's derived from the
+  // seller/buyer columns instead.
+  if (sd === "BUY_PRL")  return `<span class="side-buy" title="挂买单(maker=买方)">买单</span>`;
+  if (sd === "SELL_PRL") return `<span class="side-sell" title="挂卖单(maker=卖方)">卖单</span>`;
   return `<span class="muted">—</span>`;
 }
 function destroyChart(id) {
@@ -123,13 +147,10 @@ function renderKpis() {
        ${x.d ? `<div class="d ${x.up ? "up" : ""}">${x.d}</div>` : ""}
      </div>`).join("");
 
-  // Freshness in UTC (matches the underlying ISO timestamps on every
-  // other row in the dashboard, so users don't see a local-time top
-  // line and UTC inner times and get confused about the 8h gap).
-  const g = m.generated_at
-    ? m.generated_at.replace("T", " ").replace("Z", " UTC")
-    : "—";
-  $("#freshness").textContent = `快照：${g} · ${fmt(tr, 0)} 笔`;
+  // Freshness uses formatTime so the top line follows the global
+  // UTC/本地 toggle. Suffix tells the user which mode they're in.
+  const g = formatTime(m.generated_at, "full");
+  $("#freshness").textContent = `快照：${g} ${tzSuffix()} · ${fmt(tr, 0)} 笔`;
 }
 
 function buildStatusFilter() {
@@ -353,14 +374,29 @@ function renderTrades() {
   const rows = filteredTrades();
   const per = tState.per, pg = tState.page;
   const slice = rows.slice(pg * per, pg * per + per);
+  // Helpers (inlined into the map): build a party cell with an optional
+  // ⓜ maker badge prepended when this side posted the offer. data-addr
+  // is added to every <a> so hover-highlight catches all occurrences.
+  const partyCell = (prl, evm, isMaker, network) => {
+    if (!prl && !evm) return `<span class="muted">未上链</span>`;
+    const badge = isMaker
+      ? `<span class="maker-tag" title="挂单方 (maker)">ⓜ</span>`
+      : "";
+    const a1 = prl
+      ? `<a href="#address/${prl}" data-addr="${prl}" title="${prl}">${short(prl)}</a>`
+      : `<span class="muted">—</span>`;
+    const a2 = evm
+      ? `<a href="#address/${evm}" data-addr="${evm}" title="${evm}">${short(evm)}</a>`
+      : `<span class="muted">—</span>`;
+    return `<div class="party">${badge}<div class="addr-stack">
+        <div class="a1">${a1}</div><div class="a2">${a2}</div></div></div>`;
+  };
   $("#trades-body").innerHTML = slice.map(r => {
-    const t = r.time ? r.time.slice(5, 16).replace("T", " ") : "—";
-    const sellerCell = (r.seller_prl || r.seller_evm)
-      ? `<div class="addr-stack">
-           <div class="a1">${r.seller_prl ? `<a href="#address/${r.seller_prl}">${short(r.seller_prl)}</a>` : "—"}</div>
-           <div class="a2">${r.seller_evm ? `<a href="#address/${r.seller_evm}">${short(r.seller_evm)}</a>` : "—"}</div>
-         </div>`
-      : `<span class="muted">未上链</span>`;
+    const t = formatTime(r.time, "short");
+    const sellerCell = partyCell(r.seller_prl, r.seller_evm,
+      r.maker_side === "SELL_PRL", r.network);
+    const buyerCell  = partyCell(r.buyer_prl, r.buyer_evm,
+      r.maker_side === "BUY_PRL", r.network);
     const txCell = (r.deposit_txid || r.release_txid || r.refund_txid || r.usdc_tx_hash)
       ? `<td class="txs">
            <span class="txs-toggle" data-tid="${r.id}">•••</span>
@@ -399,9 +435,10 @@ function renderTrades() {
       <td class="num">${usdcCell}</td>
       <td class="num">${r.price_per_prl_usdc ? fmt(r.price_per_prl_usdc, 4) : '<span class="muted">—</span>'}</td>
       <td>${sellerCell}</td>
+      <td>${buyerCell}</td>
       ${txCell}
     </tr>`;
-  }).join("") || `<tr><td colspan="10" class="muted" style="text-align:center;padding:20px">无匹配成交</td></tr>`;
+  }).join("") || `<tr><td colspan="11" class="muted" style="text-align:center;padding:20px">无匹配成交</td></tr>`;
   $("#t-count").textContent = `${fmt(rows.length, 0)} 笔`;
   pager("#t-pager", rows.length, per, pg, n => { tState.page = n; renderTrades(); });
 }
@@ -499,7 +536,7 @@ function showDetail(addr) {
           ? (isEvm(addr) ? r.buyer_evm : r.buyer_prl)
           : (isEvm(addr) ? r.seller_evm : r.seller_prl);
         return `<tr><td class="id">${r.id}</td>
-          <td class="time">${(r.time || "").slice(5, 16).replace("T", " ")}</td>
+          <td class="time">${formatTime(r.time, "short")}</td>
           <td>${roleLabel}</td>
           <td>${sideCell(r.maker_side)}</td>
           <td class="num">${fmtAmt(r.prl_amount)}</td>
@@ -628,6 +665,53 @@ $$("#trades-table th[data-sort]").forEach(th => th.onclick = () => {
   if (tState.sort === k) tState.dir *= -1;
   else { tState.sort = k; tState.dir = (k === "id" || k === "time") ? -1 : 1; }
   tState.page = 0; renderTrades();
+});
+
+/* ===== UTC ⇄ 本地 time-mode toggle ===== */
+function applyTzButton() {
+  const b = $("#btn-tz");
+  if (!b) return;
+  b.textContent = tzMode === "utc" ? "UTC" : "本地";
+  b.classList.toggle("local", tzMode === "local");
+  b.title = tzMode === "utc" ? "当前 UTC · 点击切换到本地时间" : "当前本地时间 · 点击切回 UTC";
+}
+$("#btn-tz")?.addEventListener("click", () => {
+  tzMode = tzMode === "utc" ? "local" : "utc";
+  localStorage.setItem("tz-mode", tzMode);
+  applyTzButton();
+  renderKpis();
+  // Re-render whichever view is showing so all timestamps follow.
+  const h = (location.hash.slice(1) || "trades").split("/")[0];
+  if (h === "trades") renderTrades();
+  else if (h === "addresses") renderAddresses();
+  else if (location.hash.startsWith("#address/"))
+    showDetail(decodeURIComponent(location.hash.slice(9)));
+});
+applyTzButton();
+
+/* ===== hover-highlight every occurrence of the same address ===== */
+let _hoverAddr = null;
+document.addEventListener("mouseover", e => {
+  const el = e.target.closest("[data-addr]");
+  if (!el) return;
+  const a = el.dataset.addr;
+  if (!a || a === _hoverAddr) return;
+  if (_hoverAddr)
+    document.querySelectorAll(".addr-hl").forEach(x => x.classList.remove("addr-hl"));
+  _hoverAddr = a;
+  // CSS.escape protects against punctuation in the (already-safe) addr.
+  document.querySelectorAll(`[data-addr="${CSS.escape(a)}"]`)
+    .forEach(x => x.classList.add("addr-hl"));
+});
+document.addEventListener("mouseout", e => {
+  const el = e.target.closest("[data-addr]");
+  if (!el) return;
+  const rel = e.relatedTarget;
+  // If the mouse is moving to another [data-addr] element, let the
+  // next mouseover handle the switch — don't blink off in between.
+  if (rel && rel.closest && rel.closest("[data-addr]")) return;
+  document.querySelectorAll(".addr-hl").forEach(x => x.classList.remove("addr-hl"));
+  _hoverAddr = null;
 });
 
 load();
