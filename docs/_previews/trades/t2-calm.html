@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pearl OTC · Trades 重构 · T2 留白</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0b0e; --card:#0e1014; --row:#15161a; --line:#1c1e24;
+  --ink:#e5e7eb; --ink2:#9ca3af; --ink3:#6b7280;
+  --pri:#4ade80; --neg:#f87171; --info:#85B7EB; --base:#5b8def; --warn:#fbbf24;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.6 system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif}
+a{color:inherit;text-decoration:none}
+.num,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.shell{max-width:1280px;margin:0 auto;padding:24px}
+
+.tb{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:20px;flex-wrap:wrap}
+.brand{display:flex;align-items:baseline;gap:12px}
+.brand .nm{font:600 17px/1 system-ui}
+.brand .nm .sl{color:var(--pri)}
+.brand .sub{color:var(--ink3);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+.fresh{color:var(--ink3);font:11px var(--mono)}
+
+.tabs{display:flex;gap:32px;border-bottom:1px solid var(--line);margin:0 -4px}
+.tab{padding:10px 0 14px;cursor:pointer;position:relative;color:var(--ink2);font-weight:500;font-size:14px}
+.tab.act{color:var(--ink)}
+.tab.act::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--pri)}
+
+/* KPI - bigger numbers, more padding, softer glow */
+.kpis{position:relative;background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:30px 32px;margin-top:20px;display:grid;grid-template-columns:repeat(4,1fr);gap:40px;overflow:hidden}
+.kpis::before{content:"";position:absolute;inset:0;border-radius:14px;pointer-events:none;
+  background:
+    radial-gradient(ellipse at 15% 30%, rgba(74,222,128,.07), transparent 55%),
+    radial-gradient(ellipse at 55% 30%, rgba(133,183,235,.05), transparent 60%),
+    radial-gradient(ellipse at 85% 30%, rgba(248,113,113,.06), transparent 55%);}
+.kpi{position:relative;z-index:1}
+.kpi .v{font:500 28px/1 var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);letter-spacing:-.01em}
+.kpi .l{font-size:11px;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;margin-top:10px}
+.kpi .d{font:400 11px/1 var(--mono);color:var(--ink3);margin-top:4px}
+.kpi .d.up{color:var(--pri)}.kpi .d.dn{color:var(--neg)}
+
+/* CHART STRIP - more spacing */
+.cs{display:grid;grid-template-columns:1.6fr 1fr;gap:18px;margin-top:20px}
+.cs .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px}
+.cs h3{margin:0 0 6px;font:600 11px var(--mono);color:var(--ink2);text-transform:uppercase;letter-spacing:.08em}
+.cs .sub{color:var(--ink3);font:11px var(--mono);margin-bottom:18px}
+.cs .legend{display:flex;gap:18px;font:11px var(--mono);color:var(--ink2);margin-top:14px}
+.cs .legend .it{display:inline-flex;gap:6px;align-items:center}
+.cs .legend .sw{width:16px;height:2px;background:var(--pri)}
+.cs .legend .sw.d{background:none;border-top:1.5px dashed var(--info)}
+
+/* PRICE - sparkline-dominant, smaller text */
+.pp{display:flex;flex-direction:column;height:100%}
+.pp .topline{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:18px}
+.pp .left .lbl{font-size:10.5px;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em}
+.pp .now{font:500 26px/1 var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);margin-top:6px}
+.pp .right{text-align:right}
+.pp .dlt{font:500 14px var(--mono);color:var(--pri)}
+.pp .dlt.dn{color:var(--neg)}
+.pp .dlt-l{font-size:10.5px;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;margin-top:6px}
+.pp .spark{flex:1;min-height:120px}
+
+/* TOP BUYERS - thinner bars, more breath */
+.tb-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px;margin-top:20px}
+.tb-card h3{margin:0 0 6px;font:600 11px var(--mono);color:var(--ink2);text-transform:uppercase;letter-spacing:.08em}
+.tb-card .sub{color:var(--ink3);font:11px var(--mono);margin-bottom:20px}
+.tb-row{display:grid;grid-template-columns:180px 1fr 130px;gap:18px;align-items:center;padding:9px 10px;cursor:pointer;border-radius:6px}
+.tb-row:hover{background:rgba(74,222,128,.04)}
+.tb-row .addr{font:12px var(--mono);color:var(--ink2)}
+.tb-row .bar{height:11px;border-radius:6px;background:var(--pri)}
+.tb-row .v{font:12.5px var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);text-align:right}
+.tb-row .v .u{color:var(--ink3);font-size:10.5px;margin-left:4px}
+
+/* TABLE - comfortable rows */
+.tt{background:var(--card);border:1px solid var(--line);border-radius:14px;margin-top:20px;overflow:hidden}
+.tt-h{padding:18px 22px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line)}
+.tt-h .t{font:600 14px system-ui;color:var(--ink)}
+.tt-h .s{font:11px var(--mono);color:var(--ink3);margin-left:10px}
+.tt-tools{display:flex;gap:8px}
+.btn{background:transparent;border:1px solid var(--line);color:var(--ink2);font:12px var(--mono);padding:6px 12px;border-radius:6px;cursor:pointer}
+.btn:hover{border-color:var(--pri);color:var(--pri)}
+table{width:100%;border-collapse:collapse}
+th{padding:13px 18px;font:500 11px var(--mono);color:var(--ink3);text-transform:uppercase;letter-spacing:.05em;text-align:left;border-bottom:1px solid var(--line)}
+th.num,td.num{text-align:right}
+td{padding:15px 18px;color:var(--ink2);font-size:12.5px;border-bottom:1px solid var(--row)}
+tbody tr:hover{background:rgba(74,222,128,.03)}
+tbody tr:last-child td{border-bottom:none}
+td.id{color:var(--ink);font-family:var(--mono);font-variant-numeric:tabular-nums}
+td .side-buy{color:var(--pri);font:500 12px var(--mono)}
+td .side-sell{color:var(--neg);font:500 12px var(--mono)}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:8px;vertical-align:middle}
+.dot.done{background:var(--pri)}.dot.refund{background:var(--warn)}.dot.cancel{background:var(--ink3)}
+.st{font:12px var(--mono);color:var(--ink2)}
+.net-arb{color:var(--info);font:12px var(--mono)}
+.net-base{color:var(--base);font:12px var(--mono)}
+.addr-stack{font:11.5px var(--mono);line-height:1.55}
+.addr-stack .a1{color:var(--ink2)}
+.addr-stack .a2{color:var(--ink3)}
+.txs{color:var(--ink3);font:14px var(--mono);letter-spacing:1.5px;cursor:pointer;text-align:center}
+.txs:hover{color:var(--pri)}
+
+.foot{margin-top:28px;color:var(--ink3);font:11px var(--mono);text-align:center}
+.mb{display:flex;gap:6px;justify-content:center;margin-top:8px}
+.mb a{padding:5px 11px;border-radius:6px;background:var(--card);border:1px solid var(--line);color:var(--ink2);font-size:11px}
+
+@media(max-width:900px){.kpis{grid-template-columns:repeat(2,1fr);gap:24px}.kpi .v{font:500 22px var(--mono)}.cs{grid-template-columns:1fr}}
+</style></head>
+<body>
+<div class="shell">
+
+  <div class="tb">
+    <div class="brand"><span class="nm">pearl<span class="sl">/</span>otc</span>
+      <span class="sub">OTC 成交追溯 · EVM ↔ Pearl</span></div>
+    <div class="fresh">快照：2026-05-20 04:36 UTC · 1,137 笔</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab act">成交</div>
+    <div class="tab">地址</div>
+    <div class="tab">图表</div>
+    <div class="tab">关于</div>
+  </div>
+
+  <!-- LAYER 1: KPI - bigger numbers, more breathing -->
+  <div class="kpis">
+    <div class="kpi"><div class="v">92.9%</div><div class="l">全量追溯率</div><div class="d">1,056 / 1,137</div></div>
+    <div class="kpi"><div class="v">4.51M</div><div class="l">PRL 累计成交</div><div class="d up">+700K · 24h</div></div>
+    <div class="kpi"><div class="v">$2.52M</div><div class="l">USDC 累计成交</div><div class="d up">+160K · 24h</div></div>
+    <div class="kpi"><div class="v">148</div><div class="l">活跃挂单</div><div class="d">arb 89 · base 59</div></div>
+  </div>
+
+  <!-- LAYER 2 -->
+  <div class="cs">
+    <div class="card">
+      <h3>30 天结算量</h3>
+      <div class="sub">PRL 实线 · USDC 虚线 · 每日</div>
+      <svg viewBox="0 0 700 240" width="100%" height="240" preserveAspectRatio="none">
+        <g stroke="#15161a" stroke-width="1">
+          <line x1="40" y1="24"  x2="690" y2="24"/>
+          <line x1="40" y1="78"  x2="690" y2="78"/>
+          <line x1="40" y1="132" x2="690" y2="132"/>
+          <line x1="40" y1="186" x2="690" y2="186"/>
+        </g>
+        <g fill="#6b7280" font-size="9.5" font-family="'JetBrains Mono',monospace">
+          <text x="36" y="27" text-anchor="end">200K</text>
+          <text x="36" y="81" text-anchor="end">150K</text>
+          <text x="36" y="135" text-anchor="end">100K</text>
+          <text x="36" y="189" text-anchor="end">50K</text>
+        </g>
+        <path d="M 60 168 L 88 162 L 116 174 L 144 154 L 172 144 L 200 132 L 228 126 L 256 146 L 284 136 L 312 114 L 340 104 L 368 121 L 396 108 L 424 94 L 452 106 L 480 86 L 508 76 L 536 94 L 564 81 L 592 71 L 620 64 L 648 54 L 676 48"
+              fill="none" stroke="#4ade80" stroke-width="2"/>
+        <path d="M 60 194 L 88 189 L 116 196 L 144 182 L 172 175 L 200 165 L 228 160 L 256 174 L 284 168 L 312 154 L 340 146 L 368 158 L 396 150 L 424 141 L 452 148 L 480 134 L 508 128 L 536 138 L 564 129 L 592 122 L 620 116 L 648 108 L 676 104"
+              fill="none" stroke="#85B7EB" stroke-width="1.6" stroke-dasharray="4,4"/>
+        <circle cx="676" cy="48" r="3" fill="#4ade80"/>
+        <circle cx="676" cy="104" r="3" fill="#85B7EB"/>
+        <g fill="#6b7280" font-size="9.5" font-family="'JetBrains Mono',monospace">
+          <text x="60"  y="218" text-anchor="middle">04-20</text>
+          <text x="200" y="218" text-anchor="middle">04-27</text>
+          <text x="340" y="218" text-anchor="middle">05-04</text>
+          <text x="480" y="218" text-anchor="middle">05-11</text>
+          <text x="620" y="218" text-anchor="middle">05-18</text>
+        </g>
+      </svg>
+      <div class="legend">
+        <span class="it"><span class="sw"></span>PRL</span>
+        <span class="it"><span class="sw d"></span>USDC</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>PRL/USDC 价格</h3>
+      <div class="sub">即时价 · 24h 涨跌</div>
+      <div class="pp" style="height:calc(100% - 32px)">
+        <div class="topline">
+          <div class="left"><div class="lbl">当前价</div><div class="now">0.305</div></div>
+          <div class="right"><div class="dlt">▲ +1.7%</div><div class="dlt-l">24h</div></div>
+        </div>
+        <div class="spark">
+          <svg viewBox="0 0 380 150" width="100%" height="100%" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="ppB" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#4ade80" stop-opacity=".26"/>
+                <stop offset="100%" stop-color="#4ade80" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <path d="M 6 105 L 38 96 L 70 100 L 102 84 L 134 78 L 166 70 L 198 84 L 230 64 L 262 58 L 294 46 L 326 50 L 358 32 L 374 22 L 374 144 L 6 144 Z" fill="url(#ppB)"/>
+            <path d="M 6 105 L 38 96 L 70 100 L 102 84 L 134 78 L 166 70 L 198 84 L 230 64 L 262 58 L 294 46 L 326 50 L 358 32 L 374 22" fill="none" stroke="#4ade80" stroke-width="2"/>
+            <circle cx="374" cy="22" r="3.5" fill="#4ade80"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LAYER 3: TOP BUYERS - thinner bars, more breath -->
+  <div class="tb-card">
+    <h3>24 小时买入榜 · 按 PRL 累计</h3>
+    <div class="sub">最近 24h 买方按 PRL 累计买入量排序 · 任意网络</div>
+    <div class="tb-row"><span class="addr">0xe2fa0e…361586</span><span class="bar" style="width:100%;opacity:.90"></span><span class="v">82,400<span class="u">PRL</span></span></div>
+    <div class="tb-row"><span class="addr">0xb12190…02d3f7</span><span class="bar" style="width:81%;opacity:.85"></span><span class="v">67,200<span class="u">PRL</span></span></div>
+    <div class="tb-row"><span class="addr">0x9c5962…19f88a</span><span class="bar" style="width:62%;opacity:.80"></span><span class="v">51,100<span class="u">PRL</span></span></div>
+    <div class="tb-row"><span class="addr">prl1p4t9r…fup679</span><span class="bar" style="width:53%;opacity:.75"></span><span class="v">43,800<span class="u">PRL</span></span></div>
+    <div class="tb-row"><span class="addr">0x4ad9a3…7c33ea</span><span class="bar" style="width:38%;opacity:.70"></span><span class="v">31,200<span class="u">PRL</span></span></div>
+    <div class="tb-row"><span class="addr">0x715e6c…2afb18</span><span class="bar" style="width:30%;opacity:.65"></span><span class="v">24,500<span class="u">PRL</span></span></div>
+    <div class="tb-row"><span class="addr">0x8c0c4f…b7e8c2</span><span class="bar" style="width:23%;opacity:.60"></span><span class="v">18,900<span class="u">PRL</span></span></div>
+    <div class="tb-row"><span class="addr">prl1pa402…h2vtmd</span><span class="bar" style="width:15%;opacity:.55"></span><span class="v">12,300<span class="u">PRL</span></span></div>
+  </div>
+
+  <!-- LAYER 4: TABLE -->
+  <div class="tt">
+    <div class="tt-h">
+      <div class="t">成交明细 <span class="s">1,137 笔</span></div>
+      <div class="tt-tools">
+        <button class="btn">全部状态 ▾</button>
+        <button class="btn">全部网络 ▾</button>
+        <button class="btn">导出 CSV</button>
+      </div>
+    </div>
+    <table>
+      <thead><tr>
+        <th>#</th><th>时间</th><th>方向</th><th>状态</th><th>网络</th>
+        <th class="num">PRL</th><th class="num">USDC</th><th class="num">价格</th>
+        <th>卖方</th><th>tx</th>
+      </tr></thead>
+      <tbody>
+        <tr><td class="id">2292</td><td class="mono" style="color:var(--ink3)">05-19 14:56</td><td><span class="side-buy">buy</span></td><td><span class="st"><span class="dot done"></span>done</span></td><td><span class="net-arb">arb</span></td><td class="num">140.00</td><td class="num">42.00</td><td class="num">0.3000</td><td><div class="addr-stack"><div class="a1">prl1pf7zp…wfl6yk</div><div class="a2">0x9c5962…19f88a</div></div></td><td class="txs">•••</td></tr>
+        <tr><td class="id">2287</td><td class="mono" style="color:var(--ink3)">05-19 14:40</td><td><span class="side-sell">sell</span></td><td><span class="st"><span class="dot done"></span>done</span></td><td><span class="net-arb">arb</span></td><td class="num">567.00</td><td class="num">175.77</td><td class="num">0.3100</td><td><div class="addr-stack"><div class="a1">prl1qm2as…7vh4xj</div><div class="a2">0x4ad9a3…7c33ea</div></div></td><td class="txs">•••</td></tr>
+        <tr><td class="id">2263</td><td class="mono" style="color:var(--ink3)">05-19 13:58</td><td><span class="side-buy">buy</span></td><td><span class="st"><span class="dot refund"></span>refund</span></td><td><span class="net-arb">arb</span></td><td class="num">567.00</td><td class="num" style="color:var(--ink3)">—</td><td class="num">0.3050</td><td><div class="addr-stack"><div class="a1">prl1pljnz…e3kell</div><div class="a2" style="color:var(--ink3)">—</div></div></td><td class="txs">•••</td></tr>
+        <tr><td class="id">2289</td><td class="mono" style="color:var(--ink3)">05-19 15:07</td><td><span class="side-sell">sell</span></td><td><span class="st"><span class="dot done"></span>done</span></td><td><span class="net-base">base</span></td><td class="num">250.00</td><td class="num">78.75</td><td class="num">0.3150</td><td><div class="addr-stack"><div class="a1">prl1ks9gx…r3w8ml</div><div class="a2">0x715e6c…2afb18</div></div></td><td class="txs">•••</td></tr>
+        <tr><td class="id">2288</td><td class="mono" style="color:var(--ink3)">05-19 14:48</td><td><span class="side-sell">sell</span></td><td><span class="st"><span class="dot cancel"></span>cancel</span></td><td><span class="net-arb">arb</span></td><td class="num">100.00</td><td class="num" style="color:var(--ink3)">—</td><td class="num">0.3000</td><td style="color:var(--ink3);font:11.5px var(--mono)">未上链</td><td class="txs" style="color:var(--ink3)">—</td></tr>
+        <tr><td class="id">2284</td><td class="mono" style="color:var(--ink3)">05-19 14:12</td><td><span class="side-buy">buy</span></td><td><span class="st"><span class="dot done"></span>done</span></td><td><span class="net-arb">arb</span></td><td class="num">320.00</td><td class="num">100.80</td><td class="num">0.3150</td><td><div class="addr-stack"><div class="a1">prl1pwgxe…dxvyqa</div><div class="a2">0xb12190…02d3f7</div></div></td><td class="txs">•••</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="foot">
+    Pearl OTC 成交追溯 · Trades 重构 mockup T2 留白
+    <div class="mb">
+      <a href="index.html">← 三连看</a>
+      <a href="t1-spec.html">← T1 紧实</a>
+      <a href="t3-leaderboard.html">T3 榜单 →</a>
+    </div>
+  </div>
+
+</div>
+</body></html>
