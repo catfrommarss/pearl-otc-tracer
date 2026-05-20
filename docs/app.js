@@ -162,28 +162,21 @@ function renderTradesCharts() {
   Chart.defaults.font.family = "'JetBrains Mono', ui-monospace, monospace";
   Chart.defaults.color = INK3;
 
-  const pointHoverCommon = {
-    pointRadius: 0,
-    pointHoverRadius: 5,
-    pointHitRadius: 20,                        // generous mouse-target
-    pointHoverBorderColor: "#0a0b0e",
-    pointHoverBorderWidth: 2,
-  };
-
   destroyChart("chart-30d");
   charts["chart-30d"] = new Chart($("#chart-30d"), {
-    type: "line",
+    type: "bar",
     data: {
       labels: days.map(d => d.slice(5)),
       datasets: [
-        { label: "PRL",  data: days.map(d => byDay[d].prl),  borderColor: PRI,
-          backgroundColor: "rgba(74,222,128,.12)", borderWidth: 2,
-          tension: 0, fill: true, yAxisID: "y",
-          pointHoverBackgroundColor: PRI, ...pointHoverCommon },
-        { label: "USDC", data: days.map(d => byDay[d].usdc), borderColor: INFO,
-          borderWidth: 1.5, borderDash: [5, 4],
-          tension: 0, fill: false, yAxisID: "y",
-          pointHoverBackgroundColor: INFO, ...pointHoverCommon },
+        { label: "PRL",  data: days.map(d => byDay[d].prl),
+          backgroundColor: PRI, hoverBackgroundColor: "#5fe89a",
+          borderRadius: 3, borderSkipped: false,
+          categoryPercentage: 0.78, barPercentage: 0.92, yAxisID: "y" },
+        { label: "USDC", data: days.map(d => byDay[d].usdc),
+          backgroundColor: "rgba(133,183,235,0.75)",
+          hoverBackgroundColor: INFO,
+          borderRadius: 3, borderSkipped: false,
+          categoryPercentage: 0.78, barPercentage: 0.92, yAxisID: "y" },
       ]
     },
     options: {
@@ -191,7 +184,7 @@ function renderTradesCharts() {
       interaction: { mode: "index", intersect: false },   // hover anywhere on column
       plugins: {
         legend: { position: "bottom",
-          labels: { boxWidth: 16, boxHeight: 2, font: { size: 11 } } },
+          labels: { boxWidth: 12, boxHeight: 12, font: { size: 11 } } },
         tooltip: {
           backgroundColor: "rgba(14,16,20,0.96)",
           borderColor: "#1c1e24", borderWidth: 1,
