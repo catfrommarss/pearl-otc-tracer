@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pearl OTC — Mockup C · Onchain</title>
+<style>
+:root{
+  --bg:#0E1217; --panel:#13171E; --panel2:#181D26; --line:#222933; --line2:#2A323D;
+  --ink:#E8EAED; --ink2:#9CA3AF; --ink3:#6B7280;
+  /* chain palette */
+  --pearl:#3FE0B0;
+  --arb:#28A0F0;
+  --base:#3F6BFF;
+  --usdc:#3FB27F;
+  --refund:#FF7A6E;
+  --cancel:#9CA3AF;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+a{color:var(--pearl);text-decoration:none}
+.shell{max-width:1280px;margin:0 auto;padding:18px}
+
+/* TOP - chain chips instead of currency/market */
+.tb{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.tb-l{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.cg{display:flex;align-items:center;gap:6px}
+.cg .gl{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.10em;margin-right:4px}
+.chip{padding:5px 11px;border-radius:18px;background:var(--panel);border:1px solid var(--line);color:var(--ink2);font-size:12px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.chip:hover{border-color:var(--line2);color:var(--ink)}
+.chip.on.pearl{background:rgba(63,224,176,.14);border-color:rgba(63,224,176,.50);color:var(--pearl)}
+.chip.on.arb{background:rgba(40,160,240,.14);border-color:rgba(40,160,240,.50);color:var(--arb)}
+.chip.on.base{background:rgba(63,107,255,.16);border-color:rgba(63,107,255,.50);color:#7C95FF}
+.chip.on.ok{background:rgba(63,178,127,.14);border-color:rgba(63,178,127,.50);color:var(--usdc)}
+.chip.on.refund{background:rgba(255,122,110,.13);border-color:rgba(255,122,110,.45);color:var(--refund)}
+.chip.on.all{background:var(--panel2);color:var(--ink);border-color:var(--line2)}
+.chip .sw{width:8px;height:8px;border-radius:2px}
+.chip .sw.arb{background:var(--arb)}
+.chip .sw.base{background:var(--base)}
+.chip .sw.ok{background:var(--usdc)}
+.chip .sw.refund{background:var(--refund)}
+.chip .sw.cancel{background:var(--cancel)}
+.tb-r{display:flex;gap:6px}
+.iconbtn{height:32px;background:var(--panel);border:1px solid var(--line);border-radius:8px;display:inline-flex;align-items:center;justify-content:center;padding:0 12px;cursor:pointer;color:var(--ink2);font-size:12px}
+.iconbtn:hover{border-color:var(--pearl);color:var(--pearl)}
+.iconbtn.pri{background:linear-gradient(180deg,#22b48b,#1b9572);border-color:transparent;color:#0a1410;font-weight:700}
+
+/* TABS */
+.tabs{display:flex;gap:28px;border-bottom:1px solid var(--line);margin-top:4px}
+.tab{padding:6px 0 12px;cursor:pointer;position:relative;color:var(--ink2);font-weight:600;font-size:14px}
+.tab.act{color:var(--ink)}
+.tab.act::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--pearl)}
+.tab .b{display:inline-block;margin-left:6px;padding:1px 6px;background:var(--panel2);border-radius:10px;font-size:10px;color:var(--ink3);font-weight:500}
+
+/* HERO - chain-mixed gradient + chain-coded KPIs */
+.hero{position:relative;border-radius:16px;overflow:hidden;background:var(--panel);border:1px solid var(--line);margin-top:14px;padding:30px 28px}
+.hero::before{content:"";position:absolute;inset:-40px;background:
+  radial-gradient(circle at 12% 28%, rgba(63,224,176,.46), transparent 38%),
+  radial-gradient(circle at 36% 22%, rgba(40,160,240,.45), transparent 40%),
+  radial-gradient(circle at 60% 28%, rgba(63,107,255,.40), transparent 42%),
+  radial-gradient(circle at 82% 26%, rgba(63,178,127,.40), transparent 40%),
+  radial-gradient(circle at 95% 34%, rgba(255,122,110,.30), transparent 40%);
+  filter:blur(42px);opacity:.95;pointer-events:none}
+.hero-row{position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-end;gap:20px;flex-wrap:wrap}
+.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:30px;flex:1}
+.kpi .v{font-size:34px;font-weight:700;letter-spacing:-.02em;line-height:1;font-variant-numeric:tabular-nums}
+.kpi .l{color:var(--ink3);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-top:8px;display:flex;align-items:center;gap:6px}
+.kpi .d{color:var(--ink3);font-size:11px;margin-top:3px;font-family:var(--mono)}
+.kpi .l .sw{width:7px;height:7px;border-radius:50%}
+.kpi.pearl .v{color:var(--pearl)} .kpi.pearl .sw{background:var(--pearl)}
+.kpi.arb   .v{color:var(--arb)}   .kpi.arb .sw{background:var(--arb)}
+.kpi.base  .v{color:#7C95FF}      .kpi.base .sw{background:var(--base)}
+.kpi.usdc  .v{color:var(--usdc)}  .kpi.usdc .sw{background:var(--usdc)}
+.kpi.refund .v{color:var(--refund)} .kpi.refund .sw{background:var(--refund)}
+.hero-actions{position:relative;display:flex;gap:8px}
+
+/* CARD */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-top:14px}
+.card h3{margin:0 0 4px;font-size:13px;color:var(--ink);font-weight:600}
+.card .sub{color:var(--ink3);font-size:11px;margin-bottom:14px;font-family:var(--mono)}
+
+.legend{display:flex;gap:6px;margin-top:14px;flex-wrap:wrap}
+.lg{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:18px;padding:4px 11px;font-size:11px;color:var(--ink2);cursor:pointer;background:var(--panel)}
+.lg.act{color:var(--ink);border-color:var(--line2);background:var(--panel2)}
+.lg .sw{width:9px;height:9px;border-radius:50%}
+.lg.arb .sw{background:var(--arb)}
+.lg.base .sw{background:var(--base)}
+.lg.refund .sw{background:var(--refund)}
+
+/* TABLE */
+.tbl{margin-top:14px;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.tbl-head{padding:14px 18px;font-size:13px;font-weight:600;color:var(--ink);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.tbl-head .sub{color:var(--ink3);font-size:11px;font-family:var(--mono);font-weight:400}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{padding:11px 12px;font-size:11px;color:var(--ink3);font-weight:600;text-align:left;border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.04em}
+th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+td{padding:13px 12px;color:var(--ink2);border-bottom:1px solid var(--panel2)}
+tbody tr:hover{background:var(--panel2)}
+tbody tr:last-child td{border-bottom:none}
+td.id{color:var(--ink);font-family:var(--mono);font-size:12px}
+td.mono{font-family:var(--mono);font-size:12px}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:14px;font-size:11px;font-weight:600;font-family:var(--mono)}
+.pill .sw{width:7px;height:7px;border-radius:2px}
+.pill.arb{background:rgba(40,160,240,.13);color:var(--arb)} .pill.arb .sw{background:var(--arb)}
+.pill.base{background:rgba(63,107,255,.16);color:#7C95FF}  .pill.base .sw{background:var(--base)}
+.pill.ok{background:rgba(63,178,127,.13);color:var(--usdc)}
+.pill.refund{background:rgba(255,122,110,.13);color:var(--refund)}
+.pill.cancel{background:rgba(108,114,127,.18);color:var(--ink3)}
+.pill.buy{background:rgba(63,224,176,.13);color:var(--pearl)}
+.pill.sell{background:rgba(255,122,110,.13);color:var(--refund)}
+
+.foot{margin-top:18px;color:var(--ink3);font-size:11px;text-align:center;font-family:var(--mono)}
+.mb{display:flex;gap:6px;justify-content:center;margin-top:8px}
+.mb a{padding:4px 10px;border-radius:6px;background:var(--panel);border:1px solid var(--line);color:var(--ink2);font-size:11px}
+
+@media(max-width:900px){.kpis{grid-template-columns:repeat(2,1fr);gap:20px}.kpi .v{font-size:26px}}
+</style></head>
+<body>
+<div class="shell">
+
+  <!-- TOP: chain & status chip filters instead of currency/market dropdowns -->
+  <div class="tb">
+    <div class="tb-l">
+      <div class="cg">
+        <span class="gl">Network</span>
+        <span class="chip on all">All</span>
+        <span class="chip on arb"><span class="sw arb"></span>ARBITRUM <span style="color:var(--ink3);font-family:var(--mono)">·863</span></span>
+        <span class="chip"><span class="sw base"></span>BASE <span style="color:var(--ink3);font-family:var(--mono)">·274</span></span>
+      </div>
+      <div class="cg">
+        <span class="gl">Status</span>
+        <span class="chip on all">All</span>
+        <span class="chip on ok"><span class="sw ok"></span>Completed <span style="color:var(--ink3);font-family:var(--mono)">·1056</span></span>
+        <span class="chip"><span class="sw refund"></span>Refunded <span style="color:var(--ink3);font-family:var(--mono)">·28</span></span>
+        <span class="chip"><span class="sw cancel"></span>Cancelled <span style="color:var(--ink3);font-family:var(--mono)">·53</span></span>
+      </div>
+    </div>
+    <div class="tb-r">
+      <div class="iconbtn">⤓ CSV</div>
+      <div class="iconbtn pri">▽ Filter</div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab act">Trades <span class="b">1,137</span></div>
+    <div class="tab">Addresses <span class="b">1,425</span></div>
+    <div class="tab">Flows</div>
+    <div class="tab">About</div>
+  </div>
+
+  <!-- HERO: chain-mixed gradient + chain-coded KPIs -->
+  <div class="hero">
+    <div class="hero-row">
+      <div class="kpis">
+        <div class="kpi pearl"><div class="v">4.51M</div><div class="l"><span class="sw"></span>PRL Settled</div><div class="d">+0.70M / 24h</div></div>
+        <div class="kpi usdc"><div class="v">$2.52M</div><div class="l"><span class="sw"></span>USDC Settled</div><div class="d">+0.16M / 24h</div></div>
+        <div class="kpi arb"><div class="v">863</div><div class="l"><span class="sw"></span>Arbitrum Trades</div><div class="d">75.9% of flow</div></div>
+        <div class="kpi base"><div class="v">274</div><div class="l"><span class="sw"></span>Base Trades</div><div class="d">24.1% of flow</div></div>
+        <div class="kpi refund"><div class="v">28</div><div class="l"><span class="sw"></span>Refunded</div><div class="d">2.5% of total</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHART: network split, Arbitrum vs Base lines -->
+  <div class="card">
+    <h3>Settlement Volume by Network</h3>
+    <div class="sub">PRL per day · last 7d · split by chain</div>
+    <svg viewBox="0 0 1200 300" width="100%" height="280" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="cArb" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#28A0F0" stop-opacity=".30"/>
+          <stop offset="100%" stop-color="#28A0F0" stop-opacity="0"/>
+        </linearGradient>
+        <linearGradient id="cBase" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#3F6BFF" stop-opacity=".26"/>
+          <stop offset="100%" stop-color="#3F6BFF" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <g stroke="#222933" stroke-width="1">
+        <line x1="40" y1="40" x2="1190" y2="40"/>
+        <line x1="40" y1="100" x2="1190" y2="100"/>
+        <line x1="40" y1="160" x2="1190" y2="160"/>
+        <line x1="40" y1="220" x2="1190" y2="220"/>
+      </g>
+      <g fill="#6B7280" font-size="10" font-family="ui-monospace,Menlo,monospace">
+        <text x="36" y="44" text-anchor="end">800K</text>
+        <text x="36" y="104" text-anchor="end">600K</text>
+        <text x="36" y="164" text-anchor="end">400K</text>
+        <text x="36" y="224" text-anchor="end">200K</text>
+      </g>
+      <!-- Arbitrum area+line -->
+      <path d="M 60 198 L 220 184 L 380 170 L 540 158 L 700 142 L 860 124 L 1020 110 L 1160 96 L 1160 260 L 60 260 Z" fill="url(#cArb)"/>
+      <path d="M 60 198 L 220 184 L 380 170 L 540 158 L 700 142 L 860 124 L 1020 110 L 1160 96" fill="none" stroke="#28A0F0" stroke-width="2.4"/>
+      <!-- Base area+line (lower volume) -->
+      <path d="M 60 232 L 220 226 L 380 220 L 540 214 L 700 206 L 860 200 L 1020 196 L 1160 188 L 1160 260 L 60 260 Z" fill="url(#cBase)"/>
+      <path d="M 60 232 L 220 226 L 380 220 L 540 214 L 700 206 L 860 200 L 1020 196 L 1160 188" fill="none" stroke="#3F6BFF" stroke-width="2.4"/>
+      <!-- refund event markers -->
+      <g fill="#FF7A6E">
+        <rect x="316" y="166" width="6" height="6"/>
+        <rect x="606" y="138" width="6" height="6"/>
+        <rect x="956" y="106" width="6" height="6"/>
+      </g>
+      <!-- last-point dots -->
+      <circle cx="1160" cy="96" r="3.5" fill="#28A0F0"/>
+      <circle cx="1160" cy="188" r="3.5" fill="#3F6BFF"/>
+      <g fill="#6B7280" font-size="10" font-family="ui-monospace,Menlo,monospace">
+        <text x="60" y="278" text-anchor="middle">May 12</text>
+        <text x="290" y="278" text-anchor="middle">May 14</text>
+        <text x="540" y="278" text-anchor="middle">May 16</text>
+        <text x="780" y="278" text-anchor="middle">May 18</text>
+        <text x="1050" y="278" text-anchor="middle">May 20</text>
+        <text x="1160" y="278" text-anchor="end" fill="#3FE0B0">today</text>
+      </g>
+    </svg>
+    <div class="legend">
+      <div class="lg arb act"><span class="sw"></span>Arbitrum (PRL)</div>
+      <div class="lg base act"><span class="sw"></span>Base (PRL)</div>
+      <div class="lg refund act"><span class="sw"></span>Refund events</div>
+    </div>
+  </div>
+
+  <!-- TABLE - network-tinted -->
+  <div class="tbl">
+    <div class="tbl-head">Settled Trades <span class="sub">1,137 records · 2026-05-19 23:35 UTC</span></div>
+    <table>
+      <thead><tr>
+        <th>ID</th><th>Time</th><th>Network</th><th>Side</th><th>Status</th>
+        <th class="num">PRL</th><th class="num">USDC</th><th class="num">Price</th>
+        <th>Seller (PRL · EVM)</th><th>Buyer (PRL · EVM)</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td class="id">#2292</td><td>05-19 14:56</td>
+          <td><span class="pill arb"><span class="sw"></span>ARBITRUM</span></td>
+          <td><span class="pill buy">BUY_PRL</span></td><td><span class="pill ok">COMPLETED</span></td>
+          <td class="num">140.00</td><td class="num">42.00</td><td class="num">0.3000</td>
+          <td class="mono">prl1pf7zp…wfl6yk<br><span style="color:var(--arb)">0x9c5962…19f88a</span></td>
+          <td class="mono">prl1p4t9r…fup679<br><span style="color:var(--arb)">0xe2fa0e…361586</span></td>
+        </tr>
+        <tr>
+          <td class="id">#2287</td><td>05-19 14:40</td>
+          <td><span class="pill arb"><span class="sw"></span>ARBITRUM</span></td>
+          <td><span class="pill sell">SELL_PRL</span></td><td><span class="pill ok">COMPLETED</span></td>
+          <td class="num">567.00</td><td class="num">175.77</td><td class="num">0.3100</td>
+          <td class="mono">prl1qm2as…7vh4xj<br><span style="color:var(--arb)">0x4ad9a3…7c33ea</span></td>
+          <td class="mono">prl1pwgxe…dxvyqa<br><span style="color:var(--arb)">0xb12190…02d3f7</span></td>
+        </tr>
+        <tr>
+          <td class="id">#2263</td><td>05-19 13:58</td>
+          <td><span class="pill arb"><span class="sw"></span>ARBITRUM</span></td>
+          <td><span class="pill buy">BUY_PRL</span></td><td><span class="pill refund">REFUNDED</span></td>
+          <td class="num">567.00</td><td class="num">—</td><td class="num">0.3050</td>
+          <td class="mono">prl1pljnz…e3kell<br><span style="color:var(--ink3)">—</span></td>
+          <td class="mono">—<br><span style="color:var(--ink3)">—</span></td>
+        </tr>
+        <tr>
+          <td class="id">#2289</td><td>05-19 15:07</td>
+          <td><span class="pill base"><span class="sw"></span>BASE</span></td>
+          <td><span class="pill sell">SELL_PRL</span></td><td><span class="pill ok">COMPLETED</span></td>
+          <td class="num">250.00</td><td class="num">78.75</td><td class="num">0.3150</td>
+          <td class="mono">prl1ks9gx…r3w8ml<br><span style="color:#7C95FF">0x715e6c…2afb18</span></td>
+          <td class="mono">prl1pa402…h2vtmd<br><span style="color:#7C95FF">0x8c0c4f…b7e8c2</span></td>
+        </tr>
+        <tr>
+          <td class="id">#2288</td><td>05-19 14:48</td>
+          <td><span class="pill arb"><span class="sw"></span>ARBITRUM</span></td>
+          <td><span class="pill sell">SELL_PRL</span></td><td><span class="pill cancel">CANCELLED</span></td>
+          <td class="num">100.00</td><td class="num">—</td><td class="num">0.3000</td>
+          <td class="mono" style="color:var(--ink3)">no on-chain leg</td>
+          <td class="mono">—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="foot">
+    Pearl OTC settled-trade tracer · mockup C "Onchain"
+    <div class="mb">
+      <a href="index.html">← gallery</a>
+      <a href="a-faithful.html">← A Faithful</a>
+      <a href="b-subtle.html">← B Subtle</a>
+    </div>
+  </div>
+
+</div>
+</body></html>

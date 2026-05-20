@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pearl OTC — Mockup B · Subtle</title>
+<style>
+:root{
+  --bg:#0E1217; --panel:#13171E; --panel2:#181D26; --line:#1F252E; --line2:#272F3A;
+  --ink:#E6E8EB; --ink2:#8E94A1; --ink3:#5C6470;
+  --mint:#3FE0B0; --mint-d:#2BAA86;
+  --coral:#FF7A6E;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+a{color:var(--mint);text-decoration:none}
+.shell{max-width:1280px;margin:0 auto;padding:18px}
+
+/* TOP */
+.tb{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+.tb-l{display:flex;gap:8px}
+.sel{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 11px;font-size:12px}
+.sel .l{color:var(--ink3);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+.sel .v{color:var(--ink2);font-weight:500}
+.tb-r{display:flex;gap:6px}
+.iconbtn{height:30px;background:var(--panel);border:1px solid var(--line);border-radius:6px;display:inline-flex;align-items:center;justify-content:center;padding:0 11px;cursor:pointer;color:var(--ink2);font-size:12px}
+.iconbtn:hover{border-color:var(--line2);color:var(--ink)}
+.iconbtn.pri{background:rgba(63,224,176,.10);border-color:rgba(63,224,176,.4);color:var(--mint);font-weight:600}
+
+/* TABS */
+.tabs{display:flex;gap:24px;border-bottom:1px solid var(--line);padding-bottom:1px}
+.tab{padding:6px 0 12px;cursor:pointer;position:relative;color:var(--ink2);font-weight:500;font-size:13px}
+.tab.act{color:var(--ink)}
+.tab.act::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--mint)}
+
+/* HERO -- gentler glow, uniform mint KPIs */
+.hero{position:relative;border-radius:12px;overflow:hidden;background:linear-gradient(180deg,#13171E 0%,#10141B 100%);border:1px solid var(--line);margin-top:14px;padding:30px 26px}
+.hero::before{content:"";position:absolute;inset:-40px;background:
+  radial-gradient(circle at 14% 30%, rgba(107,91,255,.18), transparent 45%),
+  radial-gradient(circle at 50% 24%, rgba(78,203,255,.18), transparent 48%),
+  radial-gradient(circle at 88% 30%, rgba(63,224,176,.22), transparent 48%);
+  filter:blur(40px);opacity:.85;pointer-events:none}
+.hero-row{position:relative;z-index:1;display:flex;justify-content:space-between;align-items:flex-end;gap:20px;flex-wrap:wrap}
+.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:34px;flex:1}
+.kpi .v{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1;color:var(--mint);font-variant-numeric:tabular-nums}
+.kpi .l{color:var(--ink3);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;margin-top:8px}
+.kpi .d{color:var(--ink3);font-size:10.5px;margin-top:4px;font-family:var(--mono)}
+.kpi .d.up{color:var(--mint)}
+.hero-actions{position:relative;display:flex;gap:6px}
+
+/* CARD */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 18px 14px;margin-top:12px}
+.card h3{margin:0 0 4px;font-size:12px;color:var(--ink2);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.card .sub{color:var(--ink3);font-size:11px;margin-bottom:14px}
+
+.legend{display:flex;gap:6px;margin-top:14px}
+.lg{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--line);border-radius:14px;padding:3px 10px 3px 8px;font-size:11px;color:var(--ink2);cursor:pointer}
+.lg.act{color:var(--ink);border-color:var(--line2);background:var(--panel2)}
+.lg .dot{width:9px;height:9px;border-radius:50%}
+.lg .dot.mint{background:var(--mint)}
+.lg .dot.hollow{background:transparent;border:1.5px solid var(--mint)}
+.lg .dot.yellow{background:#D8B946}
+
+/* TABLE - compact analyst look */
+.tbl{margin-top:12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.tbl-head{padding:12px 18px;font-size:12px;font-weight:600;color:var(--ink2);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--line)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{padding:9px 12px;font-size:10.5px;color:var(--ink3);font-weight:500;text-transform:uppercase;text-align:left;letter-spacing:.04em;border-bottom:1px solid var(--line)}
+th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+td{padding:11px 12px;color:var(--ink2)}
+tbody tr:not(:last-child) td{border-bottom:1px solid rgba(31,37,46,.5)}
+tbody tr:hover{background:var(--panel2)}
+td.id{color:var(--ink);font-family:var(--mono);font-size:11px}
+td.mono{font-family:var(--mono);font-size:11px}
+.pill{display:inline-block;padding:1px 8px;border-radius:14px;font-size:10.5px;font-weight:600;font-family:var(--mono)}
+.pill.ok{background:rgba(63,224,176,.12);color:var(--mint)}
+.pill.warn{background:rgba(255,122,110,.13);color:var(--coral)}
+.pill.no{background:rgba(108,114,127,.18);color:var(--ink3)}
+.pill.s{background:var(--panel2);color:var(--ink2);border:1px solid var(--line)}
+
+.foot{margin-top:18px;color:var(--ink3);font-size:11px;text-align:center;font-family:var(--mono)}
+.mb{display:flex;gap:6px;justify-content:center;margin-top:8px}
+.mb a{padding:4px 10px;border-radius:6px;background:var(--panel);border:1px solid var(--line);color:var(--ink2);font-size:11px}
+
+@media(max-width:900px){.kpis{grid-template-columns:repeat(2,1fr);gap:18px}.kpi .v{font-size:24px}}
+</style></head>
+<body>
+<div class="shell">
+
+  <div class="tb">
+    <div class="tb-l">
+      <div class="sel"><span class="l">Network</span><span class="v">All ▾</span></div>
+      <div class="sel"><span class="l">Status</span><span class="v">All ▾</span></div>
+      <div class="sel"><span class="l">Window</span><span class="v">30d ▾</span></div>
+    </div>
+    <div class="tb-r">
+      <div class="iconbtn">⤓ Export</div>
+      <div class="iconbtn pri">▽ Filter</div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab act">Trades</div>
+    <div class="tab">Addresses</div>
+    <div class="tab">Charts</div>
+    <div class="tab">About</div>
+  </div>
+
+  <!-- HERO: same gradient glow but softer, uniform mint KPIs with delta hints -->
+  <div class="hero">
+    <div class="hero-row">
+      <div class="kpis">
+        <div class="kpi"><div class="v">1,137</div><div class="l">Traced Trades</div><div class="d up">+8 / 24h</div></div>
+        <div class="kpi"><div class="v">1,056</div><div class="l">Fully Traced</div><div class="d">92.9% coverage</div></div>
+        <div class="kpi"><div class="v">1,425</div><div class="l">Unique Addresses</div><div class="d up">+11 / 24h</div></div>
+        <div class="kpi"><div class="v">$2.52M</div><div class="l">USDC Settled</div><div class="d up">+0.16M / 24h</div></div>
+        <div class="kpi"><div class="v">0.305</div><div class="l">PRL Spot (USDC)</div><div class="d up">+1.7%</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHART: single mint line with strong fill, no marker - clean -->
+  <div class="card">
+    <h3>PRL Spot Price</h3>
+    <div class="sub">USDC per PRL · 7-day window</div>
+    <svg viewBox="0 0 1200 280" width="100%" height="260" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="bFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#3FE0B0" stop-opacity=".30"/>
+          <stop offset="100%" stop-color="#3FE0B0" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <g stroke="#1F252E" stroke-width="1">
+        <line x1="40" y1="40"  x2="1190" y2="40"/>
+        <line x1="40" y1="100" x2="1190" y2="100"/>
+        <line x1="40" y1="160" x2="1190" y2="160"/>
+        <line x1="40" y1="220" x2="1190" y2="220"/>
+      </g>
+      <g fill="#5C6470" font-size="10" font-family="ui-monospace,Menlo,monospace">
+        <text x="36" y="44" text-anchor="end">0.32</text>
+        <text x="36" y="104" text-anchor="end">0.30</text>
+        <text x="36" y="164" text-anchor="end">0.28</text>
+        <text x="36" y="224" text-anchor="end">0.26</text>
+      </g>
+      <path d="M 60 200 L 200 188 L 340 176 L 480 168 L 620 160 L 760 144 L 900 130 L 1040 116 L 1150 108 L 1150 260 L 60 260 Z" fill="url(#bFill)"/>
+      <path d="M 60 200 L 200 188 L 340 176 L 480 168 L 620 160 L 760 144 L 900 130 L 1040 116 L 1150 108" fill="none" stroke="#3FE0B0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="1150" cy="108" r="3.5" fill="#3FE0B0"/>
+      <g fill="#5C6470" font-size="10" font-family="ui-monospace,Menlo,monospace">
+        <text x="60" y="276" text-anchor="middle">May 12</text>
+        <text x="260" y="276" text-anchor="middle">May 14</text>
+        <text x="460" y="276" text-anchor="middle">May 16</text>
+        <text x="660" y="276" text-anchor="middle">May 18</text>
+        <text x="900" y="276" text-anchor="middle">May 20</text>
+        <text x="1140" y="276" text-anchor="end">May 22</text>
+      </g>
+    </svg>
+    <div class="legend">
+      <div class="lg act"><span class="dot mint"></span>PRL/USDC</div>
+      <div class="lg"><span class="dot hollow"></span>24h MA</div>
+      <div class="lg"><span class="dot yellow"></span>Refund events</div>
+    </div>
+  </div>
+
+  <!-- TABLE - compact -->
+  <div class="tbl">
+    <div class="tbl-head">Recent Settlements</div>
+    <table>
+      <thead><tr>
+        <th>ID</th><th>Time</th><th>Net</th><th>Side</th><th>Status</th>
+        <th class="num">PRL</th><th class="num">USDC</th><th class="num">Price</th>
+        <th>Seller (PRL · EVM)</th><th>Buyer (PRL · EVM)</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td class="id">#2292</td><td>05-19 14:56</td><td>ARB</td>
+          <td><span class="pill s">BUY</span></td><td><span class="pill ok">COMPLETED</span></td>
+          <td class="num">140.00</td><td class="num">42.00</td><td class="num">0.3000</td>
+          <td class="mono">prl1pf7zp… · 0x9c59…</td><td class="mono">prl1p4t9r… · 0xe2fa…</td>
+        </tr>
+        <tr>
+          <td class="id">#2287</td><td>05-19 14:40</td><td>ARB</td>
+          <td><span class="pill s">SELL</span></td><td><span class="pill ok">COMPLETED</span></td>
+          <td class="num">567.00</td><td class="num">175.77</td><td class="num">0.3100</td>
+          <td class="mono">prl1qm2as… · 0x4ad9…</td><td class="mono">prl1pwgxe… · 0xb121…</td>
+        </tr>
+        <tr>
+          <td class="id">#2263</td><td>05-19 13:58</td><td>ARB</td>
+          <td><span class="pill s">BUY</span></td><td><span class="pill warn">REFUNDED</span></td>
+          <td class="num">567.00</td><td class="num">—</td><td class="num">0.3050</td>
+          <td class="mono">prl1pljnz… · —</td><td class="mono">—</td>
+        </tr>
+        <tr>
+          <td class="id">#2289</td><td>05-19 15:07</td><td>BASE</td>
+          <td><span class="pill s">SELL</span></td><td><span class="pill ok">COMPLETED</span></td>
+          <td class="num">250.00</td><td class="num">78.75</td><td class="num">0.3150</td>
+          <td class="mono">prl1ks9gx… · 0x715e…</td><td class="mono">prl1pa402… · 0x8c0c…</td>
+        </tr>
+        <tr>
+          <td class="id">#2288</td><td>05-19 14:48</td><td>ARB</td>
+          <td><span class="pill s">SELL</span></td><td><span class="pill no">CANCELLED</span></td>
+          <td class="num">100.00</td><td class="num">—</td><td class="num">0.3000</td>
+          <td class="mono">—</td><td class="mono">—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="foot">
+    Pearl OTC settled-trade tracer · mockup B "Subtle"
+    <div class="mb">
+      <a href="index.html">← gallery</a>
+      <a href="a-faithful.html">← A Faithful</a>
+      <a href="c-onchain.html">C Onchain →</a>
+    </div>
+  </div>
+
+</div>
+</body></html>
