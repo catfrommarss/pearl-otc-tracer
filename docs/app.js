@@ -132,21 +132,37 @@ function renderTradesCharts() {
   }
   tradesChartsDrawn = true;
 
-  /* --- 30d daily volume --- */
-  const cutoff = Date.now() - 30 * 86400 * 1000;
+  /* --- 30d daily volume ---
+     Pre-build a full 30-day calendar window with zero-filled buckets so
+     days without settlements show as 0 and the x-axis stays uniform; then
+     fold in completed trades. */
   const byDay = {};
+  const days = [];
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(today.getTime() - i * 86400000);
+    const key = d.toISOString().slice(0, 10);
+    byDay[key] = { prl: 0, usdc: 0 };
+    days.push(key);
+  }
   D.trades.forEach(r => {
     if (r.status !== "COMPLETED" || !r.time) return;
-    const ts = new Date(r.time).getTime();
-    if (ts < cutoff) return;
     const day = r.time.slice(0, 10);
-    if (!byDay[day]) byDay[day] = { prl: 0, usdc: 0 };
+    if (!byDay[day]) return;                   // outside the 30-day window
     byDay[day].prl  += num(r.prl_amount);
     byDay[day].usdc += num(r.usdc_amount);
   });
-  const days = Object.keys(byDay).sort();
   Chart.defaults.font.family = "'JetBrains Mono', ui-monospace, monospace";
   Chart.defaults.color = INK3;
+
+  const pointHoverCommon = {
+    pointRadius: 0,
+    pointHoverRadius: 5,
+    pointHitRadius: 20,                        // generous mouse-target
+    pointHoverBorderColor: "#0a0b0e",
+    pointHoverBorderWidth: 2,
+  };
 
   destroyChart("chart-30d");
   charts["chart-30d"] = new Chart($("#chart-30d"), {
@@ -154,17 +170,40 @@ function renderTradesCharts() {
     data: {
       labels: days.map(d => d.slice(5)),
       datasets: [
-        { label: "PRL", data: days.map(d => byDay[d].prl), borderColor: PRI,
+        { label: "PRL",  data: days.map(d => byDay[d].prl),  borderColor: PRI,
           backgroundColor: "rgba(74,222,128,.12)", borderWidth: 2,
-          pointRadius: 0, tension: .25, fill: true, yAxisID: "y" },
+          tension: 0, fill: true, yAxisID: "y",
+          pointHoverBackgroundColor: PRI, ...pointHoverCommon },
         { label: "USDC", data: days.map(d => byDay[d].usdc), borderColor: INFO,
-          borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, tension: .25,
-          fill: false, yAxisID: "y" },
+          borderWidth: 1.5, borderDash: [5, 4],
+          tension: 0, fill: false, yAxisID: "y",
+          pointHoverBackgroundColor: INFO, ...pointHoverCommon },
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: "bottom", labels: { boxWidth: 16, boxHeight: 2, font: { size: 11 } } } },
+      interaction: { mode: "index", intersect: false },   // hover anywhere on column
+      plugins: {
+        legend: { position: "bottom",
+          labels: { boxWidth: 16, boxHeight: 2, font: { size: 11 } } },
+        tooltip: {
+          backgroundColor: "rgba(14,16,20,0.96)",
+          borderColor: "#1c1e24", borderWidth: 1,
+          padding: 10, cornerRadius: 6,
+          titleFont: { family: "'JetBrains Mono'", size: 11, weight: "500" },
+          bodyFont:  { family: "'JetBrains Mono'", size: 12 },
+          titleColor: "#e5e7eb", bodyColor: "#9ca3af",
+          displayColors: true, boxWidth: 10, boxHeight: 2,
+          callbacks: {
+            title: items => {
+              const i = items[0]?.dataIndex;
+              return (i != null && days[i]) ? days[i] : (items[0]?.label || "");
+            },
+            label: ctx => `  ${ctx.dataset.label}  ${
+              ctx.parsed.y.toLocaleString("en-US", { maximumFractionDigits: 0 })}`,
+          }
+        }
+      },
       scales: {
         x: { grid: { color: ROW, drawBorder: false }, ticks: { maxTicksLimit: 8 } },
         y: { grid: { color: ROW, drawBorder: false }, ticks: { callback: v => compact(v) } }
