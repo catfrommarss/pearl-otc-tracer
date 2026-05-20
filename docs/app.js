@@ -492,13 +492,23 @@ function showDetail(addr) {
     : `${EXP}/address/${addr}?network=mainnet`;
   const g = (l, v) => `<div><div class="v">${v}</div><div class="l">${l}</div></div>`;
   const isE = isEvm(addr);
-  const dash = '<span class="muted">—</span>';
-  // Show PRL fields only for Pearl addresses, USDC fields only for EVM:
-  // an EVM wallet doesn't hold PRL, a Pearl wallet doesn't hold USDC.
-  const soldCell   = !isE ? fmtAmt(a ? a.sold_prl   : 0) : dash;
-  const boughtCell = !isE ? fmtAmt(a ? a.bought_prl : 0) : dash;
-  const recvCell   =  isE ? fmtAmt(a ? a.recv_usdc  : 0) : dash;
-  const paidCell   =  isE ? fmtAmt(a ? a.paid_usdc  : 0) : dash;
+  // On the detail page we want the full picture of this party's
+  // participation, both chains — the addresses-table view keeps strict
+  // chain-gated columns, but here we walk the trades this address
+  // appears in and sum the PRL+USDC of completed ones by role. An EVM
+  // wallet doesn't physically hold PRL, but if it bought 47 trades worth
+  // of PRL via its linked Pearl wallet, the user wants to see that.
+  const completedMy = my.filter(r => r.status === "COMPLETED");
+  const asSeller = completedMy.filter(r =>
+    r.seller_prl === addr || r.seller_evm === addr);
+  const asBuyer  = completedMy.filter(r =>
+    r.buyer_prl  === addr || r.buyer_evm  === addr);
+  const sumPRL  = arr => arr.reduce((s, r) => s + num(r.prl_amount), 0);
+  const sumUSDC = arr => arr.reduce((s, r) => s + num(r.usdc_amount), 0);
+  const soldCell   = fmtAmt(sumPRL(asSeller));
+  const boughtCell = fmtAmt(sumPRL(asBuyer));
+  const recvCell   = fmtAmt(sumUSDC(asSeller));
+  const paidCell   = fmtAmt(sumUSDC(asBuyer));
   const linked = a && a.linked && a.linked.length
     ? a.linked.map(l => addrLink(l.address) + ` <span class="muted">${l.trades}×</span>`).join("　")
     : dash;
