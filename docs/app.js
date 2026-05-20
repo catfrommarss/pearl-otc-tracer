@@ -296,7 +296,6 @@ function route() {
   if (h === "trades") { renderTrades(); renderTradesCharts(); renderTopBuyers(); }
   else if (h === "addresses") renderAddresses();
   else if (h === "charts") drawCharts();
-  else if (h === "about") renderAbout();
 }
 window.addEventListener("hashchange", route);
 
@@ -519,34 +518,6 @@ function drawCharts() {
       scales: { x: { ticks: { maxTicksLimit: 12 }, grid: { color: ROW } },
                 y: { grid: { color: ROW } } } }
   });
-}
-
-/* ===== about ===== */
-function renderAbout() {
-  const m = D.meta, res = m.resolution || {};
-  $("#about-body").innerHTML = `
-    <h2>这是什么</h2>
-    <p>每笔 <code>pearl-otc.com</code> 上的 <b>成交</b>都是横跨两条链的 PRL ↔ USDC 兑换。
-    这个看板把每笔成交的链上交易反查到真实地址，还原 <b>谁在卖、谁在买</b>。</p>
-    <h2>地址是怎么追溯的</h2>
-    <p>• <b>Pearl 腿</b>（UTXO 链）：PRL 卖方把币转入一个一次性 2-of-2 multisig 托管地址
-    （<code>deposit_txid</code>）；成交成功则释放给买方（<code>release_txid</code>），
-    失败则退还给卖方（<code>refund_txid</code>）。vin/vout 从 Pearl 区块浏览器解析。<br>
-    • <b>USDC 腿</b>：买方在 Arbitrum/Base 上付款给卖方（<code>usdc_tx_hash</code>），
-    通过公共 RPC 解码 ERC-20 Transfer 日志得到买方/卖方 EVM 地址。<br>
-    • 经济角色（买/卖）由交易方向推导，与 <code>side</code> 标记无关
-    （后者只标注谁挂的单）。</p>
-    <h2>数据快照</h2>
-    <div class="dgrid">
-      <div><div class="v">${fmt(m.trades, 0)}</div><div class="l">成交总笔数</div></div>
-      <div><div class="v">${fmt(res.deposit, 0)}/${fmt(m.trades, 0)}</div><div class="l">Pearl deposit 已解析</div></div>
-      <div><div class="v">${fmt(res.release, 0)}</div><div class="l">release 已解析</div></div>
-      <div><div class="v">${fmt(res.evm, 0)}</div><div class="l">USDC 腿已解析</div></div>
-      <div><div class="v">${fmt(res.both_sides, 0)}</div><div class="l">双边都已追溯</div></div>
-      <div><div class="v">${m.generated_at || "—"}</div><div class="l">生成时间 (UTC)</div></div>
-    </div>
-    <p class="muted">数据全部来自公开接口。退款 / 取消的成交因没有买方腿，记录会是部分的（仅卖方侧）。
-    本工具与 Pearl Research / pearl-otc.com 无关联，仅供分析用。</p>`;
 }
 
 /* ===== shared ===== */
