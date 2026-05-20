@@ -132,7 +132,7 @@ function renderKpis() {
   const tracedPct = completed.length ? (tracedC / completed.length * 100).toFixed(1) : "0";
 
   const k = [
-    { v: tracedPct + "%", l: "四腿全齐追溯率",
+    { v: tracedPct + "%", l: "完整追溯率",
       d: `${fmt(tracedC, 0)} / ${fmt(completed.length, 0)} 已完成` },
     { v: compact(s.total_volume_prl), l: "PRL 累计成交",
       d: s.volume_24h_prl ? `+${compact(s.volume_24h_prl)} · 24h` : "", up: true },
