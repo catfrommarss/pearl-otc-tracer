@@ -1,64 +1,92 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Pearl OTC — Settled Trade Tracer</title>
-<meta name="description" content="Who buys / who sells on pearl-otc.com — EVM and Pearl addresses traced from settled trades." />
-<link rel="stylesheet" href="style.css" />
+<title>Pearl OTC · 成交追溯</title>
+<meta name="description" content="谁在买谁在卖 · pearl-otc.com 成交追溯，自动还原 EVM 与 Pearl 双边地址。" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<meta http-equiv="cache-control" content="no-cache" />
+<link rel="stylesheet" href="style.css?v=t1" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
-<script src="app.js" defer></script>
+<script src="app.js?v=t1" defer></script>
 </head>
 <body>
 <header class="topbar">
   <div class="brand">
     <span class="logo">pearl<span class="slash">/</span>otc</span>
-    <span class="sub">settled-trade tracer · EVM ↔ Pearl</span>
+    <span class="sub">OTC 成交追溯 · EVM ↔ Pearl</span>
   </div>
-  <div class="freshness" id="freshness">loading…</div>
+  <div class="freshness" id="freshness">加载中…</div>
 </header>
 
-<section class="kpis" id="kpis"></section>
-
 <nav class="tabs">
-  <a href="#trades" class="tab" data-tab="trades">Trades</a>
-  <a href="#addresses" class="tab" data-tab="addresses">Addresses</a>
-  <a href="#charts" class="tab" data-tab="charts">Charts</a>
-  <a href="#about" class="tab" data-tab="about">About</a>
+  <a href="#trades" class="tab" data-tab="trades">成交</a>
+  <a href="#addresses" class="tab" data-tab="addresses">地址</a>
+  <a href="#charts" class="tab" data-tab="charts">图表</a>
+  <a href="#about" class="tab" data-tab="about">关于</a>
 </nav>
 
 <main>
   <!-- TRADES -->
   <section id="view-trades" class="view">
+    <!-- LAYER 1: KPI strip with gradient glow -->
+    <section class="kpis" id="kpis"></section>
+
+    <!-- LAYER 2: 30d volume + price panel -->
+    <section class="charts-strip">
+      <div class="card">
+        <h3>30 天结算量</h3>
+        <div class="sub">PRL 实线 · USDC 虚线 · 每日</div>
+        <canvas id="chart-30d"></canvas>
+      </div>
+      <div class="card price-panel">
+        <h3>PRL/USDC 价格</h3>
+        <div class="sub">即时价 · 24h 涨跌</div>
+        <div class="lbl">当前价</div>
+        <div class="now" id="price-now">—</div>
+        <div class="dlt" id="price-dlt">—</div>
+        <div class="spark"><canvas id="chart-spark"></canvas></div>
+      </div>
+    </section>
+
+    <!-- LAYER 3: top buyers (24h) -->
+    <section class="top-buyers">
+      <h3>24 小时买入榜 · 按 PRL 累计</h3>
+      <div class="sub">最近 24h 买方按 PRL 累计买入量排序 · 任意网络</div>
+      <div id="top-buyers-body"></div>
+    </section>
+
+    <!-- LAYER 4: filters + compact 10-col table -->
     <div class="filters">
-      <input id="f-search" type="search" placeholder="search address / txid / trade id" />
-      <select id="f-status"><option value="">all status</option></select>
-      <select id="f-side"><option value="">all sides</option>
-        <option value="SELL_PRL">SELL_PRL</option>
-        <option value="BUY_PRL">BUY_PRL</option></select>
-      <select id="f-network"><option value="">all networks</option>
-        <option value="ARBITRUM">ARBITRUM</option>
-        <option value="BASE">BASE</option></select>
-      <label class="chk"><input type="checkbox" id="f-resolved" /> traced only</label>
-      <input id="f-from" type="date" title="from date" />
-      <input id="f-to" type="date" title="to date" />
-      <button id="btn-csv" class="btn">Export CSV</button>
+      <input id="f-search" type="search" placeholder="搜索地址 / txid / 成交 ID" />
+      <select id="f-status"><option value="">全部状态</option></select>
+      <select id="f-side"><option value="">全部方向</option>
+        <option value="SELL_PRL">sell</option>
+        <option value="BUY_PRL">buy</option></select>
+      <select id="f-network"><option value="">全部网络</option>
+        <option value="ARBITRUM">arb</option>
+        <option value="BASE">base</option></select>
+      <label class="chk"><input type="checkbox" id="f-resolved" /> 仅已追溯</label>
+      <input id="f-from" type="date" title="起" />
+      <input id="f-to" type="date" title="止" />
+      <button id="btn-csv" class="btn">导出 CSV</button>
       <span class="count" id="t-count"></span>
     </div>
     <div class="tablewrap">
       <table id="trades-table">
         <thead><tr>
           <th data-sort="id">#</th>
-          <th data-sort="time">time</th>
-          <th data-sort="maker_side">side</th>
-          <th data-sort="status">status</th>
-          <th data-sort="network">net</th>
+          <th data-sort="time">时间</th>
+          <th data-sort="maker_side">方向</th>
+          <th data-sort="status">状态</th>
+          <th data-sort="network">网络</th>
           <th data-sort="prl_amount" class="num">PRL</th>
           <th data-sort="usdc_amount" class="num">USDC</th>
-          <th data-sort="price_per_prl_usdc" class="num">price</th>
-          <th>seller (PRL→ / →USDC)</th>
-          <th>buyer (USDC→ / →PRL)</th>
-          <th>txs</th>
+          <th data-sort="price_per_prl_usdc" class="num">价格</th>
+          <th>卖方</th>
+          <th>tx</th>
         </tr></thead>
         <tbody id="trades-body"></tbody>
       </table>
@@ -69,26 +97,26 @@
   <!-- ADDRESSES -->
   <section id="view-addresses" class="view hidden">
     <div class="filters">
-      <input id="a-search" type="search" placeholder="filter by address" />
-      <select id="a-chain"><option value="">all chains</option>
+      <input id="a-search" type="search" placeholder="按地址过滤" />
+      <select id="a-chain"><option value="">全部链</option>
         <option value="pearl">pearl</option>
         <option value="evm">evm</option></select>
       <select id="a-sort">
-        <option value="volume_prl">sort: total PRL volume</option>
-        <option value="sold_prl">sort: PRL sold</option>
-        <option value="bought_prl">sort: PRL bought</option>
-        <option value="n_trades">sort: trade count</option>
-        <option value="last_seen">sort: most recent</option>
+        <option value="volume_prl">排序：累计 PRL 总量</option>
+        <option value="sold_prl">排序：PRL 卖出</option>
+        <option value="bought_prl">排序：PRL 买入</option>
+        <option value="n_trades">排序：成交笔数</option>
+        <option value="last_seen">排序：最近活跃</option>
       </select>
       <span class="count" id="a-count"></span>
     </div>
     <div class="tablewrap">
       <table id="addr-table">
         <thead><tr>
-          <th>address</th><th>chain</th>
-          <th class="num">PRL sold</th><th class="num">PRL bought</th>
-          <th class="num">USDC recv</th><th class="num">USDC paid</th>
-          <th class="num">trades</th><th>last seen</th>
+          <th>地址</th><th>链</th>
+          <th class="num">PRL 卖出</th><th class="num">PRL 买入</th>
+          <th class="num">USDC 收</th><th class="num">USDC 付</th>
+          <th class="num">笔数</th><th>最近活跃</th>
         </tr></thead>
         <tbody id="addr-body"></tbody>
       </table>
@@ -98,14 +126,14 @@
 
   <!-- ADDRESS DETAIL -->
   <section id="view-detail" class="view hidden">
-    <button class="btn back" id="btn-back">← back</button>
+    <button class="btn back" id="btn-back">← 返回</button>
     <div id="detail-body"></div>
   </section>
 
   <!-- CHARTS -->
   <section id="view-charts" class="view hidden">
-    <div class="card"><h3>Daily volume</h3><canvas id="chart-vol"></canvas></div>
-    <div class="card"><h3>PRL price (USDC)</h3><canvas id="chart-price"></canvas></div>
+    <div class="card"><h3>每日结算量</h3><canvas id="chart-vol"></canvas></div>
+    <div class="card"><h3>PRL/USDC 价格走势</h3><canvas id="chart-price"></canvas></div>
   </section>
 
   <!-- ABOUT -->
@@ -115,7 +143,7 @@
 </main>
 
 <footer>
-  <span>Data from public <code>api.pearl-otc.com</code>, Pearl explorer &amp; Arbitrum/Base RPC. Not affiliated with Pearl Research or pearl-otc.com.</span>
+  数据来自公开 <code>api.pearl-otc.com</code>、Pearl 区块浏览器、Arbitrum/Base 公共 RPC。与 Pearl Research / pearl-otc.com 无关联。
 </footer>
 </body>
 </html>
