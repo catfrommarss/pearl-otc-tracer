@@ -95,9 +95,13 @@ def resolve_usdc(tx_hash: str, network: str, usdc_amount, cache_dir: str):
     if want is not None:
         pick = min(transfers, key=lambda t: abs(t["value"] - want))
         if abs(pick["value"] - want) > max(0.02 * max(want, 1), 0.01):
-            # No transfer close to the expected amount: still record the
-            # largest movement but flag it as approximate.
-            pick = max(transfers, key=lambda t: t["value"])
+            # No transfer is close to the expected usdc_amount. Earlier
+            # versions fell back to the largest Transfer and cached it as
+            # if resolved, which polluted buyer_evm/seller_evm. Treat as
+            # unresolved instead — cache {} so we don't keep retrying a
+            # receipt that genuinely doesn't carry the matching payment.
+            cache_put(cache_dir, key, {})
+            return None
 
     try:
         block = int(receipt.get("blockNumber", "0x0"), 16)

@@ -91,12 +91,18 @@ async function load() {
 function renderKpis() {
   const m = D.meta, s = m.otc_stats || D.stats || {};
   const tr = D.trades.length;
-  const traced = D.trades.filter(r =>
+  // Only COMPLETED trades can be fully traced (REFUNDED have no buyer,
+  // CANCELLED have no on-chain leg at all). Reporting traced/total used
+  // to mis-suggest ~92% coverage when the on-chain pipeline is in fact
+  // 100% accurate on the trades that have something to trace.
+  const completed = D.trades.filter(r => r.status === "COMPLETED");
+  const tracedC = completed.filter(r =>
     (r.seller_prl || r.seller_evm) && (r.buyer_prl || r.buyer_evm)).length;
-  const tracedPct = tr ? (traced / tr * 100).toFixed(1) : "0";
+  const tracedPct = completed.length ? (tracedC / completed.length * 100).toFixed(1) : "0";
 
   const k = [
-    { v: tracedPct + "%", l: "全量追溯率", d: `${fmt(traced, 0)} / ${fmt(tr, 0)}` },
+    { v: tracedPct + "%", l: "已完成成交追溯率",
+      d: `${fmt(tracedC, 0)} / ${fmt(completed.length, 0)}` },
     { v: compact(s.total_volume_prl), l: "PRL 累计成交",
       d: s.volume_24h_prl ? `+${compact(s.volume_24h_prl)} · 24h` : "", up: true },
     { v: compact(s.total_volume_usdc, true), l: "USDC 累计成交",
@@ -394,14 +400,17 @@ function filteredAddresses() {
 function renderAddresses() {
   const rows = filteredAddresses();
   const per = aState.per, pg = aState.page;
+  // PRL flows are only meaningful for Pearl addresses, USDC flows only
+  // for EVM addresses — show "—" on the wrong-chain side instead of "0".
+  const dash = '<span class="muted">—</span>';
   $("#addr-body").innerHTML = rows.slice(pg * per, pg * per + per).map(a => `
     <tr class="clk" data-addr="${a.address}">
       <td>${addrLink(a.address, a.network)}</td>
       <td class="muted">${a.chain}${a.network ? " · " + a.network.toLowerCase() : ""}</td>
-      <td class="num">${fmt(a.sold_prl, 0)}</td>
-      <td class="num">${fmt(a.bought_prl, 0)}</td>
-      <td class="num">${fmt(a.recv_usdc, 0)}</td>
-      <td class="num">${fmt(a.paid_usdc, 0)}</td>
+      <td class="num">${a.chain === "pearl" ? fmt(a.sold_prl, 0) : dash}</td>
+      <td class="num">${a.chain === "pearl" ? fmt(a.bought_prl, 0) : dash}</td>
+      <td class="num">${a.chain === "evm" ? fmt(a.recv_usdc, 0) : dash}</td>
+      <td class="num">${a.chain === "evm" ? fmt(a.paid_usdc, 0) : dash}</td>
       <td class="num">${a.n_trades}</td>
       <td class="muted">${(a.last_seen || "").slice(0, 10)}</td>
     </tr>`).join("") || `<tr><td colspan="8" class="muted" style="text-align:center;padding:20px">无匹配地址</td></tr>`;
@@ -424,26 +433,29 @@ function showDetail(addr) {
     ? `${SCAN[network] || SCAN.ARBITRUM}/address/${addr}`
     : `${EXP}/address/${addr}?network=mainnet`;
   const g = (l, v) => `<div><div class="v">${v}</div><div class="l">${l}</div></div>`;
-  const sold = a ? a.sold_prl : my.filter(r => r.seller_prl === addr || r.seller_evm === addr)
-    .reduce((s, r) => s + num(r.prl_amount), 0);
-  const bought = a ? a.bought_prl : my.filter(r => r.buyer_prl === addr || r.buyer_evm === addr)
-    .reduce((s, r) => s + num(r.prl_amount), 0);
+  const isE = isEvm(addr);
+  const dash = '<span class="muted">—</span>';
+  // Show PRL fields only for Pearl addresses, USDC fields only for EVM:
+  // an EVM wallet doesn't hold PRL, a Pearl wallet doesn't hold USDC.
+  const soldCell   = !isE ? fmt(a ? a.sold_prl   : 0, 2) : dash;
+  const boughtCell = !isE ? fmt(a ? a.bought_prl : 0, 2) : dash;
+  const recvCell   =  isE ? fmt(a ? a.recv_usdc  : 0, 2) : dash;
+  const paidCell   =  isE ? fmt(a ? a.paid_usdc  : 0, 2) : dash;
   const linked = a && a.linked && a.linked.length
     ? a.linked.map(l => addrLink(l.address) + ` <span class="muted">${l.trades}×</span>`).join("　")
-    : '<span class="muted">—</span>';
+    : dash;
   const cps = a && a.counterparties ? a.counterparties.slice(0, 20) : [];
 
   $("#detail-body").innerHTML = `
     <div class="detail-head">
-      <span class="pill s">${isEvm(addr) ? "EVM" + (network ? " · " + network.toLowerCase() : "") : "PEARL"}</span>
+      <span class="pill s">${isE ? "EVM" + (network ? " · " + network.toLowerCase() : "") : "PEARL"}</span>
       <span class="addr mono">${addr}</span>
       <span class="copy" data-copy="${addr}">⧉ 复制</span>
       <a href="${scan}" target="_blank" rel="noopener">浏览器打开 ↗</a>
     </div>
     <div class="dgrid">
-      ${g("PRL 卖出", fmt(sold, 2))}${g("PRL 买入", fmt(bought, 2))}
-      ${g("USDC 收入", fmt(a ? a.recv_usdc : 0, 2))}
-      ${g("USDC 支出", fmt(a ? a.paid_usdc : 0, 2))}
+      ${g("PRL 卖出", soldCell)}${g("PRL 买入", boughtCell)}
+      ${g("USDC 收入", recvCell)}${g("USDC 支出", paidCell)}
       ${g("成交数", my.length)}
       ${g("首次出现", (a && a.first_seen || (my.at(-1) || {}).time || "").slice(0, 10))}
       ${g("最近活跃", (a && a.last_seen  || (my[0]    || {}).time || "").slice(0, 10))}

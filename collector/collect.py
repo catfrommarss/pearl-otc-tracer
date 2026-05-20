@@ -47,7 +47,15 @@ def _num(x):
 
 
 def build_addresses(rows: list[dict]) -> list[dict]:
-    """Aggregate per-address buy/sell totals across both legs."""
+    """Per-address rollups, chain-aware.
+
+    PRL flows are only meaningful on Pearl addresses, USDC flows only on
+    EVM addresses — a single trade contributes the SAME prl_amount once to
+    a Pearl-side address (sold_prl OR bought_prl) and the SAME usdc_amount
+    once to an EVM-side address. Adding both to both legs (an earlier bug)
+    doubled every aggregate and gave EVM addresses a meaningless PRL
+    balance (and vice versa).
+    """
     agg: dict[str, dict] = {}
 
     def slot(addr, chain, network=None):
@@ -85,8 +93,10 @@ def build_addresses(rows: list[dict]) -> list[dict]:
             if not addr:
                 continue
             a = slot(addr, chain, r.get("network") if chain == "evm" else None)
-            a["sold_prl"] += prl
-            a["recv_usdc"] += usdc
+            if chain == "pearl":
+                a["sold_prl"] += prl              # PRL only on Pearl side
+            else:
+                a["recv_usdc"] += usdc            # USDC only on EVM side
             a["n_sell"] += 1
             if tid not in a["trades"]:
                 a["trades"].append(tid)
@@ -102,8 +112,10 @@ def build_addresses(rows: list[dict]) -> list[dict]:
             if not addr:
                 continue
             a = slot(addr, chain, r.get("network") if chain == "evm" else None)
-            a["bought_prl"] += prl
-            a["paid_usdc"] += usdc
+            if chain == "pearl":
+                a["bought_prl"] += prl
+            else:
+                a["paid_usdc"] += usdc
             a["n_buy"] += 1
             if tid not in a["trades"]:
                 a["trades"].append(tid)
@@ -127,9 +139,13 @@ def build_addresses(rows: list[dict]) -> list[dict]:
             a["trades"] = a["trades"][:500]
         for k in ("sold_prl", "bought_prl", "recv_usdc", "paid_usdc"):
             a[k] = round(a[k], 6)
+        # chain-appropriate volume: PRL for pearl addresses, USDC for EVM.
         a["volume_prl"] = round(a["sold_prl"] + a["bought_prl"], 6)
+        a["volume_usdc"] = round(a["recv_usdc"] + a["paid_usdc"], 6)
         out.append(a)
-    out.sort(key=lambda x: -x["volume_prl"])
+    # sort by chain-relevant volume so each chain's biggest float to top
+    out.sort(key=lambda x: -(x["volume_prl"] if x["chain"] == "pearl"
+                              else x["volume_usdc"]))
     return out
 
 
