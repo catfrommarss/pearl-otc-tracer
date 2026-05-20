@@ -112,6 +112,13 @@ def correlate(trade: dict, pearl_cache: str, evm_resolver) -> dict:
     when = (trade.get("completed_at") or trade.get("cancelled_at")
             or trade.get("deposited_at") or trade.get("created_at"))
 
+    # Compact output. Earlier versions also emitted seller_prl_all,
+    # buyer_prl_all (always 0 or 1 element), fee_prl_addr (platform fee
+    # receiver - frontend never displays), usdc_value/usdc_token
+    # (duplicates of usdc_amount/contract once amount-matched), `resolved`
+    # (derivable from txid presence), and `flags` (~1 of 1300 rows
+    # populated). Dropping them saves ~33% of trades.json size with no
+    # frontend impact.
     return {
         "id": trade.get("id"),
         "status": trade.get("status"),
@@ -129,23 +136,13 @@ def correlate(trade: dict, pearl_cache: str, evm_resolver) -> dict:
         "time": when,
         # PRL seller = funds escrow, receives USDC.
         "seller_prl": seller_prl[0] if seller_prl else None,
-        "seller_prl_all": seller_prl,
         "seller_evm": ev["seller_evm"] if ev else None,
         # PRL buyer = pays USDC, receives PRL.
         "buyer_prl": buyer_prl[0] if buyer_prl else None,
-        "buyer_prl_all": buyer_prl,
         "buyer_evm": ev["buyer_evm"] if ev else None,
         "escrow_prl": escrow_prl[0] if escrow_prl else None,
-        "fee_prl_addr": fee_prl_addr[0] if fee_prl_addr else None,
-        "usdc_value": ev["value_usdc"] if ev else None,
-        "usdc_token": ev["token"] if ev else None,
         "deposit_txid": dep,
         "release_txid": rel,
         "refund_txid": ref,
         "usdc_tx_hash": trade.get("usdc_tx_hash"),
-        "resolved": {
-            "deposit": bool(D), "release": bool(R), "refund": bool(F),
-            "evm": bool(ev),
-        },
-        "flags": flags,
     }

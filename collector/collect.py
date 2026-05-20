@@ -129,11 +129,16 @@ def build_addresses(rows: list[dict]) -> list[dict]:
 
     out = []
     for a in agg.values():
+        # counterparties capped at 25 (frontend renders top 20 — was 50
+        # which doubled file size for unused tail). linked capped at 50
+        # (was 10, but high-frequency addresses can legitimately have
+        # 40+ funding wallets, especially big EVM market makers paired
+        # against one-shot PRL escrow change addresses).
         cps = sorted(a["counterparties"].items(), key=lambda kv: -kv[1])
-        a["counterparties"] = [{"address": k, "trades": v} for k, v in cps[:50]]
+        a["counterparties"] = [{"address": k, "trades": v} for k, v in cps[:25]]
         a["linked"] = [{"address": k, "trades": v}
                        for k, v in sorted(a["linked"].items(),
-                                          key=lambda kv: -kv[1])[:10]]
+                                          key=lambda kv: -kv[1])[:50]]
         a["n_trades"] = len(a["trades"])
         if len(a["trades"]) > 500:
             a["trades"] = a["trades"][:500]
@@ -195,15 +200,20 @@ def main():
     rows.sort(key=lambda r: (r.get("id") or 0), reverse=True)
     addresses = build_addresses(rows)
 
-    res = {"deposit": 0, "release": 0, "refund": 0, "evm": 0,
-           "both_sides": 0}
-    for r in rows:
-        for k in ("deposit", "release", "refund", "evm"):
-            if r["resolved"].get(k):
-                res[k] += 1
-        if (r.get("seller_prl") or r.get("seller_evm")) and \
-           (r.get("buyer_prl") or r.get("buyer_evm")):
-            res["both_sides"] += 1
+    # Derive resolution metrics straight from output fields (the old per-
+    # row `resolved` dict and `flags` array were dropped for size).
+    res = {
+        "pearl_resolved": sum(1 for r in rows
+                              if r.get("seller_prl") or r.get("escrow_prl")),
+        "evm_resolved":   sum(1 for r in rows if r.get("buyer_evm")),
+        "both_sides":     sum(1 for r in rows
+                              if (r.get("seller_prl") or r.get("seller_evm"))
+                              and (r.get("buyer_prl") or r.get("buyer_evm"))),
+        # all four legs present — the honest "fully traced" rate
+        "fully_traced":   sum(1 for r in rows
+                              if r.get("seller_prl") and r.get("seller_evm")
+                              and r.get("buyer_prl") and r.get("buyer_evm")),
+    }
 
     meta = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -220,8 +230,8 @@ def main():
     _write("trades.json", rows)
     _write("addresses.json", addresses)
     _write("prices.json", aux.get("prices") or [])
-    _write("offers.json", aux.get("offers") or [])
-    _write("stats.json", aux.get("stats") or {})
+    # offers.json / stats.json removed: frontend never read them; offers
+    # count lives in meta.active_offers and stats lives in meta.otc_stats.
     _write("meta.json", meta)
 
     print(json.dumps(meta, indent=1), flush=True)

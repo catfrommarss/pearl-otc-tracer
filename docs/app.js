@@ -1,7 +1,7 @@
 "use strict";
 /* Pearl OTC dashboard · T1 spec implementation. */
 
-const D = { trades: [], addresses: [], prices: [], meta: {}, stats: {}, offers: [] };
+const D = { trades: [], addresses: [], prices: [], meta: {} };
 const addrIndex = new Map();
 const charts = {};        // Chart.js instances by canvas id, for destroy/redraw
 let chartsTabDrawn = false;
@@ -16,6 +16,14 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 /* ===== helpers ===== */
 const num = x => { const n = parseFloat(x); return isFinite(n) ? n : 0; };
 const fmt = (x, d = 2) => num(x).toLocaleString("en-US", { maximumFractionDigits: d });
+// Amount-adaptive: 0 decimals when ≥ 1,000 (large amounts read cleaner
+// without ".00"), 2 decimals in the normal range, 4 decimals when < 1.
+function fmtAmt(x) {
+  const n = num(x);
+  if (n >= 1000) return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  if (n >= 1)    return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+}
 const isEvm = a => typeof a === "string" && a.startsWith("0x");
 function compact(n, dollar = false) {
   n = num(n);
@@ -75,12 +83,11 @@ async function load() {
     try { const r = await fetch(f, { cache: "no-store" }); return r.ok ? r.json() : null; }
     catch { return null; }
   };
-  const [t, a, p, m, s, o] = await Promise.all([
+  const [t, a, p, m] = await Promise.all([
     get("data/trades.json"), get("data/addresses.json"),
-    get("data/prices.json"), get("data/meta.json"),
-    get("data/stats.json"), get("data/offers.json")]);
+    get("data/prices.json"), get("data/meta.json")]);
   D.trades = t || []; D.addresses = a || []; D.prices = p || [];
-  D.meta = m || {}; D.stats = s || {}; D.offers = o || [];
+  D.meta = m || {};
   D.addresses.forEach(x => addrIndex.set(x.address, x));
   buildStatusFilter();
   renderKpis();
@@ -89,20 +96,20 @@ async function load() {
 
 /* ===== KPI strip (4 KPIs, T1 spec) ===== */
 function renderKpis() {
-  const m = D.meta, s = m.otc_stats || D.stats || {};
+  const m = D.meta, s = m.otc_stats || {};
   const tr = D.trades.length;
-  // Only COMPLETED trades can be fully traced (REFUNDED have no buyer,
-  // CANCELLED have no on-chain leg at all). Reporting traced/total used
-  // to mis-suggest ~92% coverage when the on-chain pipeline is in fact
-  // 100% accurate on the trades that have something to trace.
+  // "Fully traced" = all four legs identified (seller+buyer on both PRL
+  // and EVM sides). Earlier we accepted "either leg on each side" which
+  // showed 100% even when 2% of COMPLETED rows were missing the EVM leg
+  // due to non-standard payment paths. Honest definition is stricter.
   const completed = D.trades.filter(r => r.status === "COMPLETED");
   const tracedC = completed.filter(r =>
-    (r.seller_prl || r.seller_evm) && (r.buyer_prl || r.buyer_evm)).length;
+    r.seller_prl && r.seller_evm && r.buyer_prl && r.buyer_evm).length;
   const tracedPct = completed.length ? (tracedC / completed.length * 100).toFixed(1) : "0";
 
   const k = [
-    { v: tracedPct + "%", l: "已完成成交追溯率",
-      d: `${fmt(tracedC, 0)} / ${fmt(completed.length, 0)}` },
+    { v: tracedPct + "%", l: "四腿全齐追溯率",
+      d: `${fmt(tracedC, 0)} / ${fmt(completed.length, 0)} 已完成` },
     { v: compact(s.total_volume_prl), l: "PRL 累计成交",
       d: s.volume_24h_prl ? `+${compact(s.volume_24h_prl)} · 24h` : "", up: true },
     { v: compact(s.total_volume_usdc, true), l: "USDC 累计成交",
@@ -116,7 +123,12 @@ function renderKpis() {
        ${x.d ? `<div class="d ${x.up ? "up" : ""}">${x.d}</div>` : ""}
      </div>`).join("");
 
-  const g = m.generated_at ? new Date(m.generated_at).toLocaleString("zh-CN", {hour12:false}) : "—";
+  // Freshness in UTC (matches the underlying ISO timestamps on every
+  // other row in the dashboard, so users don't see a local-time top
+  // line and UTC inner times and get confused about the 8h gap).
+  const g = m.generated_at
+    ? m.generated_at.replace("T", " ").replace("Z", " UTC")
+    : "—";
   $("#freshness").textContent = `快照：${g} · ${fmt(tr, 0)} 笔`;
 }
 
@@ -360,14 +372,31 @@ function renderTrades() {
            </div>
          </td>`
       : `<td class="txs muted">—</td>`;
+    // For non-COMPLETED rows the USDC amount is just the original offer
+    // quote, never actually paid — show it muted so it doesn't read as
+    // a real settlement. CANCELLED also has no PRL on-chain transfer
+    // (no deposit), so mute that too; REFUNDED's PRL did flow into
+    // escrow and back so keep it readable.
+    const muted = r.status !== "COMPLETED";
+    const cancelled = r.status === "CANCELLED";
+    const prlCell = r.prl_amount
+      ? (cancelled
+          ? `<span class="muted">${fmtAmt(r.prl_amount)}</span>`
+          : fmtAmt(r.prl_amount))
+      : '<span class="muted">—</span>';
+    const usdcCell = r.usdc_amount
+      ? (muted
+          ? `<span class="muted">${fmtAmt(r.usdc_amount)}</span>`
+          : fmtAmt(r.usdc_amount))
+      : '<span class="muted">—</span>';
     return `<tr>
       <td class="id">${r.id}</td>
       <td class="time">${t}</td>
       <td>${sideCell(r.maker_side)}</td>
       <td>${statusCell(r.status)}</td>
       <td>${netCell(r.network)}</td>
-      <td class="num">${fmt(r.prl_amount, 2)}</td>
-      <td class="num">${r.usdc_amount ? fmt(r.usdc_amount, 2) : '<span class="muted">—</span>'}</td>
+      <td class="num">${prlCell}</td>
+      <td class="num">${usdcCell}</td>
       <td class="num">${r.price_per_prl_usdc ? fmt(r.price_per_prl_usdc, 4) : '<span class="muted">—</span>'}</td>
       <td>${sellerCell}</td>
       ${txCell}
@@ -399,10 +428,10 @@ function renderAddresses() {
     <tr class="clk" data-addr="${a.address}">
       <td>${addrLink(a.address, a.network)}</td>
       <td class="muted">${a.chain}${a.network ? " · " + a.network.toLowerCase() : ""}</td>
-      <td class="num">${a.chain === "pearl" ? fmt(a.sold_prl, 0) : dash}</td>
-      <td class="num">${a.chain === "pearl" ? fmt(a.bought_prl, 0) : dash}</td>
-      <td class="num">${a.chain === "evm" ? fmt(a.recv_usdc, 0) : dash}</td>
-      <td class="num">${a.chain === "evm" ? fmt(a.paid_usdc, 0) : dash}</td>
+      <td class="num">${a.chain === "pearl" ? fmtAmt(a.sold_prl) : dash}</td>
+      <td class="num">${a.chain === "pearl" ? fmtAmt(a.bought_prl) : dash}</td>
+      <td class="num">${a.chain === "evm" ? fmtAmt(a.recv_usdc) : dash}</td>
+      <td class="num">${a.chain === "evm" ? fmtAmt(a.paid_usdc) : dash}</td>
       <td class="num">${a.n_trades}</td>
       <td class="muted">${(a.last_seen || "").slice(0, 10)}</td>
     </tr>`).join("") || `<tr><td colspan="8" class="muted" style="text-align:center;padding:20px">无匹配地址</td></tr>`;
@@ -429,10 +458,10 @@ function showDetail(addr) {
   const dash = '<span class="muted">—</span>';
   // Show PRL fields only for Pearl addresses, USDC fields only for EVM:
   // an EVM wallet doesn't hold PRL, a Pearl wallet doesn't hold USDC.
-  const soldCell   = !isE ? fmt(a ? a.sold_prl   : 0, 2) : dash;
-  const boughtCell = !isE ? fmt(a ? a.bought_prl : 0, 2) : dash;
-  const recvCell   =  isE ? fmt(a ? a.recv_usdc  : 0, 2) : dash;
-  const paidCell   =  isE ? fmt(a ? a.paid_usdc  : 0, 2) : dash;
+  const soldCell   = !isE ? fmtAmt(a ? a.sold_prl   : 0) : dash;
+  const boughtCell = !isE ? fmtAmt(a ? a.bought_prl : 0) : dash;
+  const recvCell   =  isE ? fmtAmt(a ? a.recv_usdc  : 0) : dash;
+  const paidCell   =  isE ? fmtAmt(a ? a.paid_usdc  : 0) : dash;
   const linked = a && a.linked && a.linked.length
     ? a.linked.map(l => addrLink(l.address) + ` <span class="muted">${l.trades}×</span>`).join("　")
     : dash;
@@ -473,8 +502,8 @@ function showDetail(addr) {
           <td class="time">${(r.time || "").slice(5, 16).replace("T", " ")}</td>
           <td>${roleLabel}</td>
           <td>${sideCell(r.maker_side)}</td>
-          <td class="num">${fmt(r.prl_amount, 2)}</td>
-          <td class="num">${r.usdc_amount ? fmt(r.usdc_amount, 2) : "—"}</td>
+          <td class="num">${fmtAmt(r.prl_amount)}</td>
+          <td class="num">${r.usdc_amount && r.status === "COMPLETED" ? fmtAmt(r.usdc_amount) : `<span class="muted">${r.usdc_amount ? fmtAmt(r.usdc_amount) : "—"}</span>`}</td>
           <td>${addrLink(cp, r.network)}</td>
           <td class="muted">${txLink("pearl", null, r.deposit_txid)} ${txLink("evm", r.network, r.usdc_tx_hash)}</td></tr>`;
       }).join("")}
@@ -487,7 +516,9 @@ function drawCharts() {
   chartsTabDrawn = true;
   const byDay = {};
   D.trades.forEach(r => {
-    if (!r.time) return;
+    // Only COMPLETED — matches the trades-page 30d chart so users see
+    // consistent numbers across views (REFUNDED/CANCELLED inflate by ~8%).
+    if (r.status !== "COMPLETED" || !r.time) return;
     const d = r.time.slice(0, 10);
     (byDay[d] = byDay[d] || { prl: 0, usdc: 0 });
     byDay[d].prl += num(r.prl_amount); byDay[d].usdc += num(r.usdc_amount);
@@ -579,7 +610,13 @@ document.addEventListener("click", e => {
     $$(".txs-toggle.open").forEach(x => x.classList.remove("open"));
   }
 });
-$("#btn-back").onclick = () => { location.hash = "addresses"; };
+$("#btn-back").onclick = () => {
+  // Prefer real history navigation so users go back where they came from
+  // (trades table, search results, etc.); fall back to addresses tab when
+  // they landed on this page directly.
+  if (history.length > 1) history.back();
+  else location.hash = "addresses";
+};
 ["f-search", "f-status", "f-side", "f-network", "f-resolved", "f-from", "f-to"]
   .forEach(id => $("#" + id).addEventListener("input",
     () => { tState.page = 0; renderTrades(); }));

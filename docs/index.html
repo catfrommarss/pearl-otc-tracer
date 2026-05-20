@@ -8,9 +8,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <meta http-equiv="cache-control" content="no-cache" />
-<link rel="stylesheet" href="style.css?v=t5" />
+<link rel="stylesheet" href="style.css?v=t6" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
-<script src="app.js?v=t5" defer></script>
+<script src="app.js?v=t6" defer></script>
 </head>
 <body>
 <header class="topbar">
@@ -101,10 +101,13 @@
         <option value="pearl">pearl</option>
         <option value="evm">evm</option></select>
       <select id="a-sort">
-        <option value="volume_prl">排序：累计 PRL 总量</option>
+        <option value="n_trades">排序：成交笔数</option>
+        <option value="volume_prl">排序：PRL 总量（Pearl 地址）</option>
+        <option value="volume_usdc">排序：USDC 总量（EVM 地址）</option>
         <option value="sold_prl">排序：PRL 卖出</option>
         <option value="bought_prl">排序：PRL 买入</option>
-        <option value="n_trades">排序：成交笔数</option>
+        <option value="recv_usdc">排序：USDC 收</option>
+        <option value="paid_usdc">排序：USDC 付</option>
         <option value="last_seen">排序：最近活跃</option>
       </select>
       <span class="count" id="a-count"></span>
