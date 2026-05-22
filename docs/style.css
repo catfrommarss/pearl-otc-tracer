@@ -176,6 +176,16 @@ td.time{color:var(--ink3);font:11.5px var(--mono)}
   outline:1px dashed rgba(251,191,36,.7);outline-offset:2px;
   border-radius:3px}
 
+/* pearl-otc username badge (address stays primary; this is the @handle) */
+.uname{display:inline-block;font:600 10.5px var(--mono);padding:1px 6px;
+  border-radius:10px;letter-spacing:.02em;vertical-align:middle;
+  white-space:nowrap;cursor:help;border:1px solid transparent}
+.uname.big{font-size:14px;padding:3px 10px;border-radius:12px}
+.uname.t-good{color:var(--pri);background:rgba(74,222,128,.12);border-color:rgba(74,222,128,.35)}
+.uname.t-fair{color:var(--info);background:rgba(133,183,235,.12);border-color:rgba(133,183,235,.35)}
+.uname.t-new{color:var(--ink2);background:rgba(156,163,175,.12);border-color:rgba(156,163,175,.30)}
+.uname.t-poor{color:var(--neg);background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.35)}
+
 /* txs cell -- folded "•••" trigger + popover */
 .txs{position:relative;text-align:center}
 .txs-toggle{color:var(--ink3);font:14px var(--mono);letter-spacing:1.5px;

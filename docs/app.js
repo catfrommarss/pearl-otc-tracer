@@ -1,7 +1,7 @@
 "use strict";
 /* Pearl OTC dashboard · T1 spec implementation. */
 
-const D = { trades: [], addresses: [], prices: [], meta: {} };
+const D = { trades: [], addresses: [], prices: [], meta: {}, identities: {} };
 const addrIndex = new Map();
 const charts = {};        // Chart.js instances by canvas id, for destroy/redraw
 let chartsTabDrawn = false;
@@ -58,6 +58,22 @@ function short(a) {
   if (!a) return "";
   return a.length > 18 ? a.slice(0, 9) + "…" + a.slice(-6) : a;
 }
+/* ===== identities (address -> pearl-otc username + reputation) ===== */
+function idOf(a) { return a ? D.identities[a] : null; }
+// trust_tier -> color class. Observed tiers: excellent > good > fair >
+// low > poor, plus "new". Unknown tiers fall back to neutral gray.
+const TIER_CLASS = {
+  excellent: "t-good", good: "t-good", trusted: "t-good",
+  fair: "t-fair", ok: "t-fair",
+  new: "t-new",
+  low: "t-poor", poor: "t-poor", bad: "t-poor" };
+function unameBadge(a) {
+  const id = idOf(a);
+  if (!id || !id.username) return "";
+  const cls = TIER_CLASS[(id.trust_tier || "").toLowerCase()] || "t-new";
+  const tip = `@${id.username} · 信誉:${id.trust_tier || "?"} · 平台成交 ${id.trades_completed ?? "?"}`;
+  return ` <span class="uname ${cls}" title="${tip}">@${id.username}</span>`;
+}
 function txLink(chain, network, txid) {
   if (!txid) return "";
   const u = chain === "pearl"
@@ -74,6 +90,7 @@ function addrLink(a, network) {
   // data-addr lets the hover-highlight handler tag every occurrence of
   // the same address across the page.
   return `<a class="addr" data-addr="${a}" href="#address/${a}" title="${a}">${short(a)}</a>`
+    + unameBadge(a)
     + ` <a class="copy" href="${u}" target="_blank" rel="noopener" title="浏览器中打开">↗</a>`
     + ` <span class="copy" data-copy="${a}" title="复制">⧉</span>`;
 }
@@ -107,11 +124,12 @@ async function load() {
     try { const r = await fetch(f, { cache: "no-store" }); return r.ok ? r.json() : null; }
     catch { return null; }
   };
-  const [t, a, p, m] = await Promise.all([
+  const [t, a, p, m, ids] = await Promise.all([
     get("data/trades.json"), get("data/addresses.json"),
-    get("data/prices.json"), get("data/meta.json")]);
+    get("data/prices.json"), get("data/meta.json"),
+    get("data/identities.json")]);
   D.trades = t || []; D.addresses = a || []; D.prices = p || [];
-  D.meta = m || {};
+  D.meta = m || {}; D.identities = ids || {};
   D.addresses.forEach(x => addrIndex.set(x.address, x));
   buildStatusFilter();
   renderKpis();
@@ -352,8 +370,10 @@ function filteredTrades() {
       if (!d || (from && d < from) || (to && d > to)) return false;
     }
     if (q) {
+      const u = a => { const id = idOf(a); return id ? id.username : ""; };
       const hay = [r.id, r.seller_prl, r.seller_evm, r.buyer_prl, r.buyer_evm,
-        r.deposit_txid, r.release_txid, r.refund_txid, r.usdc_tx_hash]
+        r.deposit_txid, r.release_txid, r.refund_txid, r.usdc_tx_hash,
+        u(r.seller_prl), u(r.seller_evm), u(r.buyer_prl), u(r.buyer_evm)]
         .join(" ").toLowerCase();
       if (!hay.includes(q)) return false;
     }
@@ -383,10 +403,10 @@ function renderTrades() {
       ? `<span class="maker-tag" title="挂单方 (maker)">ⓜ</span>`
       : "";
     const a1 = prl
-      ? `<a href="#address/${prl}" data-addr="${prl}" title="${prl}">${short(prl)}</a>`
+      ? `<a href="#address/${prl}" data-addr="${prl}" title="${prl}">${short(prl)}</a>${unameBadge(prl)}`
       : `<span class="muted">—</span>`;
     const a2 = evm
-      ? `<a href="#address/${evm}" data-addr="${evm}" title="${evm}">${short(evm)}</a>`
+      ? `<a href="#address/${evm}" data-addr="${evm}" title="${evm}">${short(evm)}</a>${unameBadge(evm)}`
       : `<span class="muted">—</span>`;
     return `<div class="party">${badge}<div class="addr-stack">
         <div class="a1">${a1}</div><div class="a2">${a2}</div></div></div>`;
@@ -514,13 +534,36 @@ function showDetail(addr) {
     : dash;
   const cps = a && a.counterparties ? a.counterparties.slice(0, 20) : [];
 
+  // pearl-otc identity (only known for addresses that were a user's
+  // profile/refund address in some offer).
+  const id = idOf(addr);
+  const tierCls = id ? (TIER_CLASS[(id.trust_tier || "").toLowerCase()] || "t-new") : "";
+  const idHead = id && id.username
+    ? `<span class="uname ${tierCls} big">@${id.username}</span>` : "";
+  const repBlock = id ? `
+    <div class="card">
+      <h3>平台信誉 · pearl-otc 记录</h3>
+      <div class="dgrid">
+        ${g("用户名", "@" + id.username)}
+        ${g("信誉等级", id.trust_tier || "—")}
+        ${g("平台成交数", fmt(id.trades_completed, 0))}
+        ${g("平台取消数", fmt(id.trades_cancelled, 0))}
+        ${g("平台累计 USDC", fmtAmt(id.total_usdc_volume_traded))}
+        ${g("平台最近活跃", (id.last_active_at || "").slice(0, 10) || "—")}
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:4px">
+        ↑ 平台自报口径，与下方链上推导的数据来源不同，可能不完全一致。</div>
+    </div>` : "";
+
   $("#detail-body").innerHTML = `
     <div class="detail-head">
       <span class="pill s">${isE ? "EVM" + (network ? " · " + network.toLowerCase() : "") : "PEARL"}</span>
+      ${idHead}
       <span class="addr mono">${addr}</span>
       <span class="copy" data-copy="${addr}">⧉ 复制</span>
       <a href="${scan}" target="_blank" rel="noopener">浏览器打开 ↗</a>
     </div>
+    ${repBlock}
     <div class="dgrid">
       ${g("PRL 卖出", soldCell)}${g("PRL 买入", boughtCell)}
       ${g("USDC 收入", recvCell)}${g("USDC 支出", paidCell)}

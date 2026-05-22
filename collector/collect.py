@@ -28,6 +28,7 @@ ROOT = os.path.dirname(HERE)
 DATA = os.path.join(ROOT, "docs", "data")
 PEARL_CACHE = os.path.join(ROOT, "cache", "pearl")
 EVM_CACHE = os.path.join(ROOT, "cache", "evm")
+IDENTITIES_CACHE = os.path.join(ROOT, "cache", "identities.json")
 
 
 def _write(name, obj):
@@ -154,6 +155,71 @@ def build_addresses(rows: list[dict]) -> list[dict]:
     return out
 
 
+_ID_KEEP = ("username", "trust_tier", "trust_score", "trades_completed",
+            "trades_cancelled", "total_usdc_volume_traded", "is_trusted",
+            "last_active_at")
+
+
+def build_identities(offers, addresses):
+    """Map addresses -> pearl-otc usernames (+ reputation), add-only.
+
+    The only public bridge from an address to a username is an active
+    offer's seller_prl_refund_address (the user's main PRL address). We
+    accumulate these across runs in cache/identities.json so coverage
+    grows as offers rotate, refresh reputation for every known user, and
+    emit docs/data/identities.json containing just the precise-match
+    addresses that actually appear in our addresses.json.
+    Returns (published_map, total_accumulated).
+    """
+    acc = {}
+    if os.path.exists(IDENTITIES_CACHE):
+        try:
+            with open(IDENTITIES_CACHE, encoding="utf-8") as f:
+                acc = json.load(f)
+        except Exception:  # noqa: BLE001 - corrupt cache, rebuild
+            acc = {}
+
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for o in (offers or []):
+        addr = o.get("seller_prl_refund_address")
+        uid = o.get("user_id")
+        if not addr or uid is None:
+            continue
+        rec = acc.get(addr) or {}
+        rec["user_id"] = uid
+        rec.setdefault("first_seen", now)
+        rec["seen_at"] = now
+        acc[addr] = rec
+
+    uids = sorted({r.get("user_id") for r in acc.values()
+                   if r.get("user_id") is not None})
+    rep = {}
+    if uids:
+        for u in otc.reputation_bulk(uids):
+            if u.get("user_id") is not None:
+                rep[u["user_id"]] = u
+    for rec in acc.values():
+        u = rep.get(rec.get("user_id"))
+        if u:
+            for k in _ID_KEEP:
+                if u.get(k) is not None:
+                    rec[k] = u[k]
+
+    os.makedirs(os.path.dirname(IDENTITIES_CACHE), exist_ok=True)
+    tmp = IDENTITIES_CACHE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(acc, f, separators=(",", ":"), ensure_ascii=False)
+    os.replace(tmp, IDENTITIES_CACHE)
+
+    our = {a["address"] for a in addresses}
+    pub = {}
+    for addr, rec in acc.items():
+        if addr in our and rec.get("username"):
+            pub[addr] = {k: rec[k] for k in (("user_id",) + _ID_KEEP)
+                         if k in rec}
+    return pub, len(acc)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-pages", type=int, default=None,
@@ -199,6 +265,9 @@ def main():
 
     rows.sort(key=lambda r: (r.get("id") or 0), reverse=True)
     addresses = build_addresses(rows)
+    identities, id_total = build_identities(aux.get("offers"), addresses)
+    print(f"  identities: {len(identities)} published / {id_total} known",
+          flush=True)
 
     # Derive resolution metrics straight from output fields (the old per-
     # row `resolved` dict and `flags` array were dropped for size).
@@ -225,10 +294,12 @@ def main():
         "public_stats": aux.get("public_stats"),
         "health": aux.get("health"),
         "active_offers": len(aux["offers"]) if aux.get("offers") else 0,
+        "named_addresses": len(identities),
     }
 
     _write("trades.json", rows)
     _write("addresses.json", addresses)
+    _write("identities.json", identities)
     _write("prices.json", aux.get("prices") or [])
     # offers.json / stats.json removed: frontend never read them; offers
     # count lives in meta.active_offers and stats lives in meta.otc_stats.

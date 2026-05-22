@@ -68,3 +68,22 @@ def public_stats(window_days: int = 30) -> dict:
 
 def health() -> dict:
     return get(f"{BASE}/health", kind="json")
+
+
+def reputation_bulk(ids: list[int]) -> list[dict]:
+    """Map user ids -> reputation records (username, trust_tier, trust_score,
+    trades_completed/cancelled, total_usdc_volume_traded, is_trusted,
+    last_active_at). This is the public endpoint the marketplace uses to
+    show seller usernames. Chunked to keep URLs short."""
+    out: list[dict] = []
+    uniq = sorted({int(i) for i in ids if i is not None})
+    for k in range(0, len(uniq), 100):
+        chunk = uniq[k:k + 100]
+        try:
+            rows = get(f"{BASE}/users/reputation-bulk?ids="
+                       + ",".join(str(i) for i in chunk), kind="json")
+            if isinstance(rows, list):
+                out.extend(rows)
+        except Exception:  # noqa: BLE001 - identity is best-effort
+            continue
+    return out
