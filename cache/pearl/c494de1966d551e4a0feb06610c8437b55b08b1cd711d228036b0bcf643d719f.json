@@ -1,0 +1,1 @@
+{"txid":"b942d15a5d49cc2690ef4e7205aec7ad989ce2f183f68f40e99ad5c9c5b6349e","block_height":null,"time":null,"vin":[{"txid":"b942d15a5d49cc2690ef4e7205aec7ad989ce2f183f68f40e99ad5c9c5b6349e","vout":1,"amount":3081,"coinbase":false}],"vout":[{"n":0,"addresses":["prl1p8v73jxag7wu6kprg6dkcvcchqxfst2g9yggkr3mf7jcptnjncaxqu2s344"],"amount":3080.99999}]}
