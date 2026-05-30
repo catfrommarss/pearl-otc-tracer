@@ -3,3 +3,7 @@ __pycache__/
 *.tmp
 .DS_Store
 .venv/
+# throwaway investigation scripts
+collector/probe*.py
+collector/*_page.txt
+_offers_probe.json

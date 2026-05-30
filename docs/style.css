@@ -91,24 +91,50 @@ main{padding:14px 22px 32px;max-width:1280px;margin:0 auto}
 .price-panel .spark{margin-top:14px;height:100px}
 .price-panel .spark canvas{height:100px !important;width:100% !important}
 
-/* ===== TOP BUYERS ===== */
+/* ===== TOP BUYERS / SELLERS (two columns) ===== */
+.top-parties{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
 .top-buyers{background:var(--card);border:1px solid var(--line);
-  border-radius:12px;padding:16px;margin-bottom:14px}
+  border-radius:12px;padding:16px;margin-bottom:0}
 .top-buyers h3{margin:0 0 4px;font:600 11px var(--mono);color:var(--ink2);
   text-transform:uppercase;letter-spacing:.08em}
 .top-buyers .sub{color:var(--ink3);font:11px var(--mono);margin-bottom:14px}
-.tb-row{display:grid;grid-template-columns:180px 1fr 120px;gap:14px;
+.tb-row{display:grid;grid-template-columns:minmax(120px,180px) 1fr 110px;gap:12px;
   align-items:center;padding:6px 8px;cursor:pointer;border-radius:5px}
 .tb-row:hover{background:rgba(74,222,128,.05)}
-.tb-row .addr{font:12px var(--mono);color:var(--ink2)}
-.tb-row .bar-wrap{height:18px;background:transparent}
+.tb-row .addr{font:12px var(--mono);color:var(--ink2);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.tb-row .tb-n{color:var(--ink3);font-size:10px}
+.tb-row .bar-wrap{height:16px;background:transparent}
 .tb-row .bar{height:100%;border-radius:3px;background:var(--pri);
   transition:opacity .15s}
+.tb-row .bar.sell{background:var(--neg)}
 .tb-row .v{font:12px var(--mono);font-variant-numeric:tabular-nums;
   color:var(--ink);text-align:right}
 .tb-row .v .u{color:var(--ink3);font-size:10.5px;margin-left:4px}
 .top-buyers .empty{color:var(--ink3);font:12px var(--mono);
   text-align:center;padding:16px 0}
+
+/* ===== custom label chip + editor ===== */
+.tag-chip{display:inline-block;font:600 10.5px var(--mono);padding:1px 6px;
+  border-radius:8px;color:var(--warn);background:rgba(251,191,36,.12);
+  border:1px solid rgba(251,191,36,.35);vertical-align:middle}
+.tag-chip.big{font-size:13px;padding:3px 9px;border-radius:10px}
+.label-edit{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  background:var(--card);border:1px solid var(--line);border-radius:10px;
+  padding:10px 14px;margin-bottom:14px}
+.label-edit .le-l{font:600 11px var(--mono);color:var(--ink2);
+  text-transform:uppercase;letter-spacing:.06em}
+.label-edit input{flex:1;min-width:160px;background:var(--bg);color:var(--ink);
+  border:1px solid var(--line);border-radius:7px;padding:6px 10px;font:13px var(--mono)}
+.label-edit input:focus{outline:none;border-color:var(--warn)}
+.label-edit .le-hint{font-size:10.5px}
+
+/* ===== counterparty relationship rows ===== */
+.cp-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:5px 0;border-bottom:1px solid var(--row)}
+.cp-row:last-child{border-bottom:none}
+.cp-meta{font:11px var(--mono);color:var(--ink3);margin-left:auto;
+  white-space:nowrap}
 
 /* ===== FILTERS ===== */
 .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
@@ -245,7 +271,24 @@ footer{padding:18px 22px;color:var(--ink3);font:11px var(--mono);
 @media (max-width:900px){
   .kpis{grid-template-columns:repeat(2,1fr);gap:20px}
   .charts-strip{grid-template-columns:1fr}
+  .top-parties{grid-template-columns:1fr}
   .two{grid-template-columns:1fr}
-  .tb-row{grid-template-columns:140px 1fr 100px;gap:10px}
+  .tb-row{grid-template-columns:minmax(110px,150px) 1fr 90px;gap:10px}
   .filters input[type=search]{min-width:100%}
+}
+@media (max-width:680px){
+  main{padding:12px 12px 28px}
+  .topbar{padding:12px 12px}
+  .tabs{padding:0 12px;gap:18px}
+  .kpis{padding:14px 16px;gap:14px}
+  .kpi .v{font-size:18px}
+  /* let the wide 11-col trades table scroll horizontally instead of
+     squishing; keep it readable with a min-width. */
+  #trades-table{min-width:760px}
+  .tablewrap{-webkit-overflow-scrolling:touch}
+  .filters{gap:6px}
+  .filters input,.filters select,.btn{font-size:12px;padding:5px 8px}
+  .detail-head .addr{font-size:11px}
+  .dgrid{grid-template-columns:repeat(2,1fr)}
+  .label-edit{padding:8px 10px}
 }

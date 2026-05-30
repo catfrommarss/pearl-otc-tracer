@@ -58,6 +58,29 @@ function short(a) {
   if (!a) return "";
   return a.length > 18 ? a.slice(0, 9) + "…" + a.slice(-6) : a;
 }
+/* ===== custom labels (committed shared layer + localStorage personal) =====
+   Personal labels override shared. Both keyed by address. */
+let sharedLabels = {};
+let personalLabels = {};
+try { personalLabels = JSON.parse(localStorage.getItem("pearl-labels") || "{}"); }
+catch { personalLabels = {}; }
+function labelOf(a) {
+  if (!a) return "";
+  return (personalLabels[a] || sharedLabels[a] || "").trim();
+}
+function setLabel(a, text) {
+  text = (text || "").trim();
+  if (text) personalLabels[a] = text; else delete personalLabels[a];
+  try { localStorage.setItem("pearl-labels", JSON.stringify(personalLabels)); }
+  catch {}
+}
+function labelChip(a) {
+  const l = labelOf(a);
+  if (!l) return "";
+  const esc = l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  return ` <span class="tag-chip" title="自定义标签：${esc}">🏷${esc}</span>`;
+}
+
 /* ===== identities (address -> pearl-otc username + reputation) ===== */
 function idOf(a) { return a ? D.identities[a] : null; }
 // trust_tier -> color class. Observed tiers: excellent > good > fair >
@@ -90,7 +113,7 @@ function addrLink(a, network) {
   // data-addr lets the hover-highlight handler tag every occurrence of
   // the same address across the page.
   return `<a class="addr" data-addr="${a}" href="#address/${a}" title="${a}">${short(a)}</a>`
-    + unameBadge(a)
+    + unameBadge(a) + labelChip(a)
     + ` <a class="copy" href="${u}" target="_blank" rel="noopener" title="浏览器中打开">↗</a>`
     + ` <span class="copy" data-copy="${a}" title="复制">⧉</span>`;
 }
@@ -119,18 +142,31 @@ function destroyChart(id) {
 }
 
 /* ===== load ===== */
+const _get = async f => {
+  try { const r = await fetch(f, { cache: "no-store" }); return r.ok ? r.json() : null; }
+  catch { return null; }
+};
+// addresses.json is the heaviest file (~2 MB) and only the 地址 tab needs
+// it (the detail page derives everything from trades). Load it lazily.
+let _addrLoading = null;
+async function ensureAddresses() {
+  if (D.addresses.length) return;
+  if (!_addrLoading) _addrLoading = _get("data/addresses.json").then(a => {
+    D.addresses = a || [];
+    D.addresses.forEach(x => addrIndex.set(x.address, x));
+  });
+  await _addrLoading;
+}
+
 async function load() {
-  const get = async f => {
-    try { const r = await fetch(f, { cache: "no-store" }); return r.ok ? r.json() : null; }
-    catch { return null; }
-  };
-  const [t, a, p, m, ids] = await Promise.all([
-    get("data/trades.json"), get("data/addresses.json"),
-    get("data/prices.json"), get("data/meta.json"),
-    get("data/identities.json")]);
-  D.trades = t || []; D.addresses = a || []; D.prices = p || [];
+  // Eager: everything the default 成交 tab needs. Skip addresses.json.
+  const [t, p, m, ids, lab] = await Promise.all([
+    _get("data/trades.json"), _get("data/prices.json"),
+    _get("data/meta.json"), _get("data/identities.json"),
+    _get("data/labels.json")]);
+  D.trades = t || []; D.prices = p || [];
   D.meta = m || {}; D.identities = ids || {};
-  D.addresses.forEach(x => addrIndex.set(x.address, x));
+  sharedLabels = lab || {};
   buildStatusFilter();
   renderKpis();
   route();
@@ -299,42 +335,58 @@ function renderTradesCharts() {
   }
 }
 
-/* ===== top buyers (24h) ===== */
-function renderTopBuyers() {
-  const cutoff = Date.now() - 86400 * 1000;
+/* ===== top buyers / sellers (24h) =====
+   The window is anchored to the newest trade in the data, NOT the
+   viewer's clock — otherwise a slightly stale snapshot or a quiet day
+   would blank the panel. So it always shows the last 24h of *activity*. */
+function latestTradeMs() {
+  let mx = 0;
+  for (const r of D.trades) {
+    if (!r.time) continue;
+    const t = new Date(r.time).getTime();
+    if (t > mx) mx = t;
+  }
+  return mx || Date.now();
+}
+function renderTopParties(side) {
+  // side: "buy" -> buyers (received PRL); "sell" -> sellers (sent PRL)
+  const cutoff = latestTradeMs() - 86400 * 1000;
   const acc = new Map();
   D.trades.forEach(r => {
     if (r.status !== "COMPLETED" || !r.time) return;
-    const ts = new Date(r.time).getTime();
-    if (ts < cutoff) return;
-    const key = r.buyer_evm || r.buyer_prl;
+    if (new Date(r.time).getTime() < cutoff) return;
+    const key = side === "buy"
+      ? (r.buyer_evm || r.buyer_prl)
+      : (r.seller_evm || r.seller_prl);
     if (!key) return;
-    const cur = acc.get(key) || { addr: key, amt: 0, n: 0, nets: new Set(),
-      otherSide: r.buyer_evm ? r.buyer_prl : r.buyer_evm };
+    const cur = acc.get(key) || { addr: key, amt: 0, n: 0 };
     cur.amt += num(r.prl_amount);
     cur.n += 1;
-    if (r.network) cur.nets.add(r.network);
     acc.set(key, cur);
   });
   const list = [...acc.values()].sort((a, b) => b.amt - a.amt).slice(0, 8);
-  const body = $("#top-buyers-body");
+  const body = $(side === "buy" ? "#top-buyers-body" : "#top-sellers-body");
+  if (!body) return;
   if (!list.length) {
-    body.innerHTML = `<div class="empty">过去 24h 暂无成交</div>`;
+    body.innerHTML = `<div class="empty">近 24h 暂无${side === "buy" ? "买入" : "卖出"}</div>`;
     return;
   }
   const max = list[0].amt;
   body.innerHTML = list.map((x, i) => {
     const w = max ? (x.amt / max * 100) : 0;
     const op = (1 - i * 0.5 / Math.max(list.length - 1, 1)).toFixed(2);
-    return `<div class="tb-row" data-addr="${x.addr}">
-      <span class="addr">${short(x.addr)}</span>
-      <span class="bar-wrap"><span class="bar" style="width:${w.toFixed(1)}%;opacity:${op}"></span></span>
+    const id = idOf(x.addr), lbl = labelOf(x.addr);
+    const name = lbl ? `🏷${lbl}` : (id && id.username ? `@${id.username}` : short(x.addr));
+    return `<div class="tb-row" data-addr="${x.addr}" title="${x.addr}">
+      <span class="addr">${name}<span class="tb-n"> ·${x.n}笔</span></span>
+      <span class="bar-wrap"><span class="bar ${side === "sell" ? "sell" : ""}" style="width:${w.toFixed(1)}%;opacity:${op}"></span></span>
       <span class="v">${fmt(x.amt, 0)}<span class="u">PRL</span></span>
     </div>`;
   }).join("");
   $$(".tb-row", body).forEach(el =>
     el.onclick = () => { location.hash = "address/" + el.dataset.addr; });
 }
+function renderTopBuyers() { renderTopParties("buy"); renderTopParties("sell"); }
 
 /* ===== routing ===== */
 function route() {
@@ -345,7 +397,7 @@ function route() {
   const v = $("#view-" + h);
   (v || $("#view-trades")).classList.remove("hidden");
   if (h === "trades") { renderTrades(); renderTradesCharts(); renderTopBuyers(); }
-  else if (h === "addresses") renderAddresses();
+  else if (h === "addresses") { ensureAddresses().then(renderAddresses); }
   else if (h === "charts") drawCharts();
 }
 window.addEventListener("hashchange", route);
@@ -373,7 +425,9 @@ function filteredTrades() {
       const u = a => { const id = idOf(a); return id ? id.username : ""; };
       const hay = [r.id, r.seller_prl, r.seller_evm, r.buyer_prl, r.buyer_evm,
         r.deposit_txid, r.release_txid, r.refund_txid, r.usdc_tx_hash,
-        u(r.seller_prl), u(r.seller_evm), u(r.buyer_prl), u(r.buyer_evm)]
+        u(r.seller_prl), u(r.seller_evm), u(r.buyer_prl), u(r.buyer_evm),
+        labelOf(r.seller_prl), labelOf(r.seller_evm),
+        labelOf(r.buyer_prl), labelOf(r.buyer_evm)]
         .join(" ").toLowerCase();
       if (!hay.includes(q)) return false;
     }
@@ -403,10 +457,10 @@ function renderTrades() {
       ? `<span class="maker-tag" title="挂单方 (maker)">ⓜ</span>`
       : "";
     const a1 = prl
-      ? `<a href="#address/${prl}" data-addr="${prl}" title="${prl}">${short(prl)}</a>${unameBadge(prl)}`
+      ? `<a href="#address/${prl}" data-addr="${prl}" title="${prl}">${short(prl)}</a>${unameBadge(prl)}${labelChip(prl)}`
       : `<span class="muted">—</span>`;
     const a2 = evm
-      ? `<a href="#address/${evm}" data-addr="${evm}" title="${evm}">${short(evm)}</a>${unameBadge(evm)}`
+      ? `<a href="#address/${evm}" data-addr="${evm}" title="${evm}">${short(evm)}</a>${unameBadge(evm)}${labelChip(evm)}`
       : `<span class="muted">—</span>`;
     return `<div class="party">${badge}<div class="addr-stack">
         <div class="a1">${a1}</div><div class="a2">${a2}</div></div></div>`;
@@ -503,36 +557,53 @@ function showDetail(addr) {
   $$(".view").forEach(v => v.classList.add("hidden"));
   $$(".tab").forEach(t => t.classList.remove("active"));
   $("#view-detail").classList.remove("hidden");
-  const a = addrIndex.get(addr);
+  const dash = '<span class="muted">—</span>';
+  const isE = isEvm(addr);
+  // Everything here is derived from the trades this address appears in,
+  // so the detail page works without the heavy addresses.json.
   const my = D.trades.filter(r =>
     [r.seller_prl, r.seller_evm, r.buyer_prl, r.buyer_evm].includes(addr));
-  const network = a ? a.network : (my[0] && my[0].network);
-  const scan = isEvm(addr)
+  const network = my.find(r => r.network)?.network;
+  const scan = isE
     ? `${SCAN[network] || SCAN.ARBITRUM}/address/${addr}`
     : `${EXP}/address/${addr}?network=mainnet`;
   const g = (l, v) => `<div><div class="v">${v}</div><div class="l">${l}</div></div>`;
-  const isE = isEvm(addr);
-  // On the detail page we want the full picture of this party's
-  // participation, both chains — the addresses-table view keeps strict
-  // chain-gated columns, but here we walk the trades this address
-  // appears in and sum the PRL+USDC of completed ones by role. An EVM
-  // wallet doesn't physically hold PRL, but if it bought 47 trades worth
-  // of PRL via its linked Pearl wallet, the user wants to see that.
+
   const completedMy = my.filter(r => r.status === "COMPLETED");
-  const asSeller = completedMy.filter(r =>
-    r.seller_prl === addr || r.seller_evm === addr);
-  const asBuyer  = completedMy.filter(r =>
-    r.buyer_prl  === addr || r.buyer_evm  === addr);
+  const asSeller = completedMy.filter(r => r.seller_prl === addr || r.seller_evm === addr);
+  const asBuyer  = completedMy.filter(r => r.buyer_prl === addr || r.buyer_evm === addr);
   const sumPRL  = arr => arr.reduce((s, r) => s + num(r.prl_amount), 0);
   const sumUSDC = arr => arr.reduce((s, r) => s + num(r.usdc_amount), 0);
-  const soldCell   = fmtAmt(sumPRL(asSeller));
-  const boughtCell = fmtAmt(sumPRL(asBuyer));
-  const recvCell   = fmtAmt(sumUSDC(asSeller));
-  const paidCell   = fmtAmt(sumUSDC(asBuyer));
-  const linked = a && a.linked && a.linked.length
-    ? a.linked.map(l => addrLink(l.address) + ` <span class="muted">${l.trades}×</span>`).join("　")
+  const times = my.map(r => r.time).filter(Boolean).sort();
+
+  // Linked = same party's other-leg address (e.g. this Pearl seller's
+  // EVM address), derived from each trade. Counterparties = the opposite
+  // party, aggregated with trade count, PRL volume, and direction.
+  const linkedC = {}, cpAgg = {};
+  for (const r of my) {
+    const meSeller = r.seller_prl === addr || r.seller_evm === addr;
+    const myLegs = meSeller ? [r.seller_prl, r.seller_evm] : [r.buyer_prl, r.buyer_evm];
+    for (const leg of myLegs)
+      if (leg && leg !== addr) linkedC[leg] = (linkedC[leg] || 0) + 1;
+    const cpLegs = meSeller ? [r.buyer_prl, r.buyer_evm] : [r.seller_prl, r.seller_evm];
+    const cpKey = cpLegs[0] || cpLegs[1];   // prefer Pearl leg, else EVM
+    if (!cpKey) continue;
+    const c = cpAgg[cpKey] || { addr: cpKey, n: 0, prl: 0, boughtFromMe: 0, soldToMe: 0 };
+    c.n += 1; c.prl += num(r.prl_amount);
+    if (meSeller) c.boughtFromMe += 1; else c.soldToMe += 1;
+    cpAgg[cpKey] = c;
+  }
+  const linked = Object.keys(linkedC).length
+    ? Object.entries(linkedC).sort((a, b) => b[1] - a[1])
+        .map(([ad, n]) => addrLink(ad) + ` <span class="muted">${n}×</span>`).join("　")
     : dash;
-  const cps = a && a.counterparties ? a.counterparties.slice(0, 20) : [];
+  const cps = Object.values(cpAgg).sort((a, b) => b.n - a.n).slice(0, 20);
+  const cpRow = c => {
+    const dir = c.boughtFromMe && c.soldToMe ? "双向"
+      : c.boughtFromMe ? "向其卖出" : "从其买入";
+    return `<div class="cp-row">${addrLink(c.addr, network)}
+      <span class="cp-meta">${c.n}笔 · ${fmtAmt(c.prl)} PRL · ${dir}</span></div>`;
+  };
 
   // pearl-otc identity (only known for addresses that were a user's
   // profile/refund address in some offer).
@@ -555,26 +626,41 @@ function showDetail(addr) {
         ↑ 平台自报口径，与下方链上推导的数据来源不同，可能不完全一致。</div>
     </div>` : "";
 
+  // Custom label editor (personal localStorage; shared shown as hint).
+  const curLabel = personalLabels[addr] || "";
+  const sharedHint = !curLabel && sharedLabels[addr] ? sharedLabels[addr] : "";
+  const labelBlock = `
+    <div class="label-edit">
+      <span class="le-l">自定义标签</span>
+      <input id="le-input" type="text" maxlength="40" value="${curLabel.replace(/"/g, "&quot;")}"
+        placeholder="${sharedHint ? "共享：" + sharedHint : "给这个地址起个名…"}" />
+      <button id="le-save" class="btn">保存</button>
+      ${curLabel ? `<button id="le-clear" class="btn">清除</button>` : ""}
+      <span class="le-hint muted">仅存于本浏览器</span>
+    </div>`;
+
   $("#detail-body").innerHTML = `
     <div class="detail-head">
       <span class="pill s">${isE ? "EVM" + (network ? " · " + network.toLowerCase() : "") : "PEARL"}</span>
       ${idHead}
+      ${labelOf(addr) ? `<span class="tag-chip big">🏷${labelOf(addr)}</span>` : ""}
       <span class="addr mono">${addr}</span>
       <span class="copy" data-copy="${addr}">⧉ 复制</span>
       <a href="${scan}" target="_blank" rel="noopener">浏览器打开 ↗</a>
     </div>
+    ${labelBlock}
     ${repBlock}
     <div class="dgrid">
-      ${g("PRL 卖出", soldCell)}${g("PRL 买入", boughtCell)}
-      ${g("USDC 收入", recvCell)}${g("USDC 支出", paidCell)}
+      ${g("PRL 卖出", fmtAmt(sumPRL(asSeller)))}${g("PRL 买入", fmtAmt(sumPRL(asBuyer)))}
+      ${g("USDC 收入", fmtAmt(sumUSDC(asSeller)))}${g("USDC 支出", fmtAmt(sumUSDC(asBuyer)))}
       ${g("成交数", my.length)}
-      ${g("首次出现", (a && a.first_seen || (my.at(-1) || {}).time || "").slice(0, 10))}
-      ${g("最近活跃", (a && a.last_seen  || (my[0]    || {}).time || "").slice(0, 10))}
+      ${g("首次出现", (times[0] || "").slice(0, 10))}
+      ${g("最近活跃", (times.at(-1) || "").slice(0, 10))}
     </div>
     <div class="two">
       <div class="card"><h3>同方关联地址（同一方的另一腿）</h3>${linked}</div>
-      <div class="card"><h3>主要对手方</h3>
-        ${cps.length ? cps.map(c => `<div>${addrLink(c.address)} <span class="muted">${c.trades}×</span></div>`).join("") : '<span class="muted">—</span>'}</div>
+      <div class="card"><h3>对手方关系（${cps.length}）</h3>
+        ${cps.length ? cps.map(cpRow).join("") : dash}</div>
     </div>
     <div class="card"><h3>该地址的成交（${my.length} 笔）</h3>
     <div class="tablewrap"><table><thead><tr>
@@ -598,6 +684,13 @@ function showDetail(addr) {
           <td class="muted">${txLink("pearl", null, r.deposit_txid)} ${txLink("evm", r.network, r.usdc_tx_hash)}</td></tr>`;
       }).join("")}
     </tbody></table></div></div>`;
+
+  // Wire the label editor (re-attached on each render).
+  const save = () => { setLabel(addr, $("#le-input").value); showDetail(addr); };
+  $("#le-save") && ($("#le-save").onclick = save);
+  $("#le-input") && ($("#le-input").addEventListener("keydown",
+    e => { if (e.key === "Enter") save(); }));
+  $("#le-clear") && ($("#le-clear").onclick = () => { setLabel(addr, ""); showDetail(addr); });
 }
 
 /* ===== charts tab ===== */

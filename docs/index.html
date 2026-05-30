@@ -8,9 +8,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <meta http-equiv="cache-control" content="no-cache" />
-<link rel="stylesheet" href="style.css?v=t10" />
+<link rel="stylesheet" href="style.css?v=t11" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
-<script src="app.js?v=t10" defer></script>
+<script src="app.js?v=t11" defer></script>
 </head>
 <body>
 <header class="topbar">
@@ -53,11 +53,18 @@
       </div>
     </section>
 
-    <!-- LAYER 3: top buyers (24h) -->
-    <section class="top-buyers">
-      <h3>24 小时买入榜 · 按 PRL 累计</h3>
-      <div class="sub">最近 24h 买方按 PRL 累计买入量排序 · 任意网络</div>
-      <div id="top-buyers-body"></div>
+    <!-- LAYER 3: top buyers / sellers (last 24h of activity) -->
+    <section class="top-parties">
+      <div class="top-buyers">
+        <h3>24h 买入榜 · 按 PRL</h3>
+        <div class="sub">近 24h 买方累计买入量 · 任意网络</div>
+        <div id="top-buyers-body"></div>
+      </div>
+      <div class="top-buyers">
+        <h3>24h 卖出榜 · 按 PRL</h3>
+        <div class="sub">近 24h 卖方累计卖出量 · 任意网络</div>
+        <div id="top-sellers-body"></div>
+      </div>
     </section>
 
     <!-- LAYER 4: filters + compact 10-col table -->
