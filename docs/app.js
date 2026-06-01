@@ -218,8 +218,12 @@ function renderKpis() {
     const liveN = m.live_rows || 0;
     if (ds && ds.note && liveN) {
       const since = (ds.archive_until || "").slice(0, 10);
-      ban.innerHTML = `⚠ ${ds.note} 链上地址追溯数据截至 <b>${since}</b>`
-        + `（存档 ${fmt(m.archive_rows, 0)} 笔）；之后 ${fmt(liveN, 0)} 笔为新数据源成交。`;
+      const inf = D.trades.filter(r => r.source === "live" && r.inferred).length;
+      ban.innerHTML = `⚠ OTC 改版(2026-06)移除了交易哈希。<b>${since}</b> 前为完整链上追溯存档`
+        + `（${fmt(m.archive_rows, 0)} 笔）；之后 ${fmt(liveN, 0)} 笔为新数据源成交，`
+        + (inf
+            ? `其中 <b>${fmt(inf, 0)}</b> 笔的地址已由本工具<b>链上反查恢复</b>（标 <span class="src-live">推断</span>，PRL 侧经 prlscan 费用漏斗、USDC 侧按金额+时间唯一匹配）。`
+            : `地址仅含 maker 用户名。`);
       ban.hidden = false;
     } else {
       ban.hidden = true;
@@ -507,10 +511,14 @@ function renderTrades() {
     : `<span class="muted">—</span>`;
   $("#trades-body").innerHTML = slice.map(r => {
     const live = r.source === "live";
+    // A live row is "enriched" when on-chain reconstruction recovered its
+    // addresses (PRL via prlscan fee funnel; USDC via amount+time match).
+    const enriched = live && (r.seller_prl || r.buyer_prl || r.seller_evm || r.buyer_evm);
     const t = formatTime(r.time, "short");
-    const sellerCell = live ? makerCell(r.maker_username)
+    const sellerCell = (live && !enriched) ? makerCell(r.maker_username)
       : partyCell(r.seller_prl, r.seller_evm, r.maker_side === "SELL_PRL", r.network);
-    const buyerCell  = live ? `<span class="muted" title="新数据源未公开">未公开</span>`
+    const buyerCell  = (live && !enriched)
+      ? `<span class="muted" title="尚未恢复">—</span>`
       : partyCell(r.buyer_prl, r.buyer_evm, r.maker_side === "BUY_PRL", r.network);
     const txCell = (r.deposit_txid || r.release_txid || r.refund_txid || r.usdc_tx_hash)
       ? `<td class="txs">
@@ -541,12 +549,19 @@ function renderTrades() {
           : fmtAmt(r.usdc_amount))
       : '<span class="muted">—</span>';
     const idCell = live
-      ? `<span class="src-live" title="改版后新成交 · 仅 maker，无链上追溯">live</span>`
+      ? `<span class="src-live" title="改版后新成交${r.inferred ? " · 地址经链上反查恢复（推断）" : ""}">live${r.inferred ? "·推断" : ""}</span>`
       : r.id;
+    // For live rows the feed gives the maker username (side unknown), so
+    // the 挂单 column shows @maker instead of 买单/卖单.
+    const sideTd = live
+      ? (r.maker_username
+          ? `<span class="muted" title="挂单方 maker">@${String(r.maker_username).replace(/</g, "&lt;")}</span>`
+          : '<span class="muted">—</span>')
+      : sideCell(r.maker_side);
     return `<tr${live ? ' class="row-live"' : ''}>
       <td class="id">${idCell}</td>
       <td class="time">${t}</td>
-      <td>${sideCell(r.maker_side)}</td>
+      <td>${sideTd}</td>
       <td>${statusCell(r.status)}</td>
       <td>${netCell(r.network)}</td>
       <td class="num">${prlCell}</td>

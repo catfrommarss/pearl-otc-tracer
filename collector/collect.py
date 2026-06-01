@@ -18,7 +18,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import otc
-from evm import resolve_usdc
+import enrich
+from evm import resolve_usdc, usdc_match
 from correlate import correlate
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -30,6 +31,8 @@ DATA = os.path.join(ROOT, "docs", "data")
 PEARL_CACHE = os.path.join(ROOT, "cache", "pearl")
 EVM_CACHE = os.path.join(ROOT, "cache", "evm")
 IDENTITIES_CACHE = os.path.join(ROOT, "cache", "identities.json")
+PRL_TXS_CACHE = os.path.join(ROOT, "cache", "prl_txs")     # prlscan tx cache
+EVM_MATCH_CACHE = os.path.join(ROOT, "cache", "evm_match")  # usdc amount+time
 
 
 def _write(name, obj):
@@ -280,6 +283,62 @@ def live_to_row(s):
     }
 
 
+def enrich_live(live_rows):
+    """Recover buyer/seller addresses for live rows (post-redesign).
+
+    PRL leg (authoritative): match to the OTC fee-address funnel on prlscan
+    by exact gross amount + nearest time → seller_prl / buyer_prl.
+    USDC leg (heuristic): global amount+time match on Arbitrum, accepted
+    only when the candidate is UNIQUE (round amounts collide, so a
+    non-unique window would risk a wrong attribution). Everything attached
+    here is flagged inferred:true so the UI can mark it as reconstructed
+    rather than reported by the platform."""
+    todo = [r for r in live_rows if not r.get("seller_prl")]
+    if not todo:
+        return
+    os.makedirs(PRL_TXS_CACHE, exist_ok=True)
+    os.makedirs(EVM_MATCH_CACHE, exist_ok=True)
+    since = min(_iso_to_epoch(r["time"]) or 0 for r in todo) - 3600
+    print(f"  enriching {len(todo)} live rows (PRL funnel since {since}) ...",
+          flush=True)
+    by_grains, _ = enrich.build_pearl_index(since, PRL_TXS_CACHE)
+
+    prl_ok = evm_ok = 0
+    for r in todo:
+        ep = _iso_to_epoch(r.get("time"))
+        # --- PRL leg: exact gross grains + nearest time within 30 min ---
+        g = round(_num(r.get("prl_amount")) * enrich.GRAINS)
+        best, bd = None, 10 ** 9
+        for c in by_grains.get(g, []):
+            if c.get("time") is None:
+                continue
+            d = abs(c["time"] - (ep or 0))
+            if d < bd:
+                bd, best = d, c
+        if best and bd <= 1800 and best.get("seller_prl") and best.get("buyer_prl"):
+            r["seller_prl"] = best["seller_prl"]
+            r["buyer_prl"] = best["buyer_prl"]
+            r["escrow_prl"] = best.get("escrow_prl")
+            r["release_txid"] = best.get("release_txid")
+            r["deposit_txid"] = best.get("deposit_txid")
+            r["inferred"] = True
+            prl_ok += 1
+        # --- USDC leg: unique-candidate global match only ---
+        try:
+            m = usdc_match(r.get("network") or "ARBITRUM",
+                           r.get("usdc_amount"), ep, EVM_MATCH_CACHE)
+        except Exception:  # noqa: BLE001
+            m = None
+        if m and m.get("n_candidates") == 1:
+            r["seller_evm"] = m["seller_evm"]
+            r["buyer_evm"] = m["buyer_evm"]
+            r["usdc_token"] = m.get("token")
+            r["inferred"] = True
+            evm_ok += 1
+    print(f"  enriched PRL {prl_ok}/{len(todo)} · USDC(unique) {evm_ok}/{len(todo)}",
+          flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-pages", type=int, default=None, help="(unused)")
@@ -329,6 +388,13 @@ def main():
         if k not in arch_keys:
             live_by_key[k] = row
     live_rows = list(live_by_key.values())
+
+    # Recover addresses for live rows the redesign stripped of tx hashes.
+    # Best-effort + cached: a prlscan / RPC outage must not crash refresh.
+    try:
+        enrich_live(live_rows)
+    except Exception as e:  # noqa: BLE001
+        print(f"  WARN enrichment failed: {e}", flush=True)
 
     rows = archive + live_rows
     rows.sort(key=lambda r: (r.get("time") or ""), reverse=True)
@@ -386,8 +452,9 @@ def main():
             "live_from": min((r["time"] for r in live_rows if r.get("time")),
                              default=None),
             "note": ("OTC 改版(2026-06)后公开接口移除了交易哈希："
-                     "archive 为可追溯链上地址的历史存档；live 为改版后新成交，"
-                     "仅含 maker 用户名 / 金额 / 价格，无法追溯地址。"),
+                     "archive 为平台直接提供哈希的历史存档；live 为改版后新成交，"
+                     "其地址由本工具链上反查恢复（PRL 经 prlscan 费用漏斗、"
+                     "USDC 按金额+时间唯一匹配），标记为 inferred。"),
         },
         "elapsed_s": round(time.time() - t0, 1),
     }

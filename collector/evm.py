@@ -118,3 +118,117 @@ def resolve_usdc(tx_hash: str, network: str, usdc_amount, cache_dir: str):
     }
     cache_put(cache_dir, key, out)
     return out
+
+
+# ===== global amount+time matching (post-redesign: no tx hash available) =====
+
+# USDC payment lands a few minutes before the settlement record time
+# (calibrated from archive: ~5-18 min, median ~8.5 min). Search window:
+_USDC_WIN_BACK = 1150   # seconds before record time (covers the tail)
+_USDC_WIN_FWD = 60      # small forward margin
+_USDC_EXPECT = 518      # median offset, used to disambiguate candidates
+
+USDC_TOKENS = {
+    "ARBITRUM": ["0xaf88d065e77c8cc2239327c5edb3a432268e5831",   # native USDC
+                 "0xff970a61a04b1ca14834a43f5de4533ebddb5cc8"],  # bridged USDC.e
+    "BASE": ["0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",       # native USDC
+             "0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca"],      # USDbC
+}
+
+_anchor = {}  # network -> (block, ts)
+
+
+def _bn(network):
+    return int(_rpc(network, "eth_blockNumber", []), 16)
+
+
+def _bts(network, bn):
+    b = _rpc(network, "eth_getBlockByNumber", [hex(int(bn)), False])
+    return int(b["timestamp"], 16)
+
+
+def block_at_time(network, ts):
+    """Estimate the block number at a unix timestamp (rate-refined)."""
+    a = _anchor.get(network)
+    if not a:
+        bn = _bn(network)
+        a = (bn, _bts(network, bn))
+        _anchor[network] = a
+    bn, bts = a
+    lo = max(1, bn - 200000)
+    rate = (bts - _bts(network, lo)) / (bn - lo)  # sec/block
+    est = int(bn - (bts - ts) / rate)
+    for _ in range(6):
+        est = max(1, min(bn, est))
+        ets = _bts(network, est)
+        diff = ts - ets
+        if abs(diff) <= 4:
+            break
+        est = int(est + diff / rate)
+    return max(1, min(bn, est))
+
+
+def _logs_chunked(network, token, lo, hi, want_int):
+    matches, step, b = [], 900, lo
+    while b <= hi:
+        end = min(b + step - 1, hi)
+        try:
+            logs = _rpc(network, "eth_getLogs", [{
+                "address": token, "topics": [TRANSFER_TOPIC],
+                "fromBlock": hex(b), "toBlock": hex(end)}])
+        except Exception:  # noqa: BLE001 - range/size error → shrink
+            if step > 120:
+                step //= 2
+                continue
+            b = end + 1
+            continue
+        for lg in (logs or []):
+            try:
+                if int(lg["data"], 16) == want_int and len(lg["topics"]) >= 3:
+                    matches.append({"from": _topic_addr(lg["topics"][1]),
+                                    "to": _topic_addr(lg["topics"][2]),
+                                    "block": int(lg["blockNumber"], 16),
+                                    "token": token})
+            except (ValueError, KeyError):
+                pass
+        b = end + 1
+    return matches
+
+
+def usdc_match(network, usdc_amount, t_epoch, cache_dir):
+    """Find the USDC transfer for a settlement by exact amount + time window
+    (no tx hash). Returns {buyer_evm, seller_evm, n_candidates, inferred}
+    or None. Result cached by (network, amount, time)."""
+    network = network or "ARBITRUM"
+    try:
+        want = int(round(float(usdc_amount) * 1e6))
+    except (TypeError, ValueError):
+        return None
+    if not t_epoch or want <= 0:
+        return None
+    key = f"m_{network}_{want}_{t_epoch}".lower()
+    cached = cache_get(cache_dir, key)
+    if cached is not None:
+        return cached or None
+    try:
+        lo = block_at_time(network, t_epoch - _USDC_WIN_BACK)
+        hi = block_at_time(network, t_epoch + _USDC_WIN_FWD)
+    except Exception:  # noqa: BLE001
+        return None
+    cand = []
+    for tok in USDC_TOKENS.get(network, []):
+        cand += _logs_chunked(network, tok, lo, hi, want)
+    if not cand:
+        cache_put(cache_dir, key, {})
+        return None
+    if len(cand) > 1:
+        try:
+            tb = block_at_time(network, t_epoch - _USDC_EXPECT)
+        except Exception:  # noqa: BLE001
+            tb = (lo + hi) // 2
+        cand.sort(key=lambda c: abs(c["block"] - tb))
+    c = cand[0]
+    out = {"buyer_evm": c["from"], "seller_evm": c["to"],
+           "token": c["token"], "n_candidates": len(cand), "inferred": True}
+    cache_put(cache_dir, key, out)
+    return out
