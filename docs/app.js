@@ -78,7 +78,7 @@ function labelChip(a) {
   const l = labelOf(a);
   if (!l) return "";
   const esc = l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-  return ` <span class="tag-chip" title="自定义标签：${esc}">🏷${esc}</span>`;
+  return ` <span class="tag-chip" title="自定义标签：${esc}">${esc}</span>`;
 }
 
 /* ===== identities (address -> pearl-otc username + reputation) ===== */
@@ -212,23 +212,7 @@ function renderKpis() {
   const g = formatTime(m.generated_at, "full");
   $("#freshness").textContent = `快照：${g} ${tzSuffix()} · ${fmt(tr, 0)} 笔`;
 
-  // Data-source banner: explain the post-redesign split once live rows exist.
-  const ds = m.data_source, ban = $("#ds-banner");
-  if (ban) {
-    const liveN = m.live_rows || 0;
-    if (ds && ds.note && liveN) {
-      const since = (ds.archive_until || "").slice(0, 10);
-      const inf = D.trades.filter(r => r.source === "live" && r.inferred).length;
-      ban.innerHTML = `⚠ OTC 改版(2026-06)移除了交易哈希。<b>${since}</b> 前为完整链上追溯存档`
-        + `（${fmt(m.archive_rows, 0)} 笔）；之后 ${fmt(liveN, 0)} 笔为新数据源成交，`
-        + (inf
-            ? `其中 <b>${fmt(inf, 0)}</b> 笔的地址已由本工具<b>链上反查恢复</b>（标 <span class="src-live">推断</span>，PRL 侧经 prlscan 费用漏斗、USDC 侧按金额+时间唯一匹配）。`
-            : `地址仅含 maker 用户名。`);
-      ban.hidden = false;
-    } else {
-      ban.hidden = true;
-    }
-  }
+  // (data-source banner removed per request)
 }
 
 function buildStatusFilter() {
@@ -410,7 +394,7 @@ function renderTopParties(side) {
     const w = max ? (x.amt / max * 100) : 0;
     const op = (1 - i * 0.5 / Math.max(list.length - 1, 1)).toFixed(2);
     const id = idOf(x.addr), lbl = labelOf(x.addr);
-    const name = lbl ? `🏷${lbl}` : (id && id.username ? `@${id.username}` : short(x.addr));
+    const name = lbl ? lbl : (id && id.username ? `@${id.username}` : short(x.addr));
     return `<div class="tb-row" data-addr="${x.addr}" title="${x.addr}">
       <span class="addr">${name}<span class="tb-n"> ·${x.n}笔</span></span>
       <span class="bar-wrap"><span class="bar ${side === "sell" ? "sell" : ""}" style="width:${w.toFixed(1)}%;opacity:${op}"></span></span>
@@ -702,7 +686,7 @@ function showDetail(addr) {
     <div class="detail-head">
       <span class="pill s">${isE ? "EVM" + (network ? " · " + network.toLowerCase() : "") : "PEARL"}</span>
       ${idHead}
-      ${labelOf(addr) ? `<span class="tag-chip big">🏷${labelOf(addr)}</span>` : ""}
+      ${labelOf(addr) ? `<span class="tag-chip big">${labelOf(addr)}</span>` : ""}
       <span class="addr mono">${addr}</span>
       <span class="copy" data-copy="${addr}">⧉ 复制</span>
       <a href="${scan}" target="_blank" rel="noopener">浏览器打开 ↗</a>
