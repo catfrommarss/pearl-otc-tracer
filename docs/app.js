@@ -180,19 +180,25 @@ function renderKpis() {
   // and EVM sides). Earlier we accepted "either leg on each side" which
   // showed 100% even when 2% of COMPLETED rows were missing the EVM leg
   // due to non-standard payment paths. Honest definition is stricter.
-  const completed = D.trades.filter(r => r.status === "COMPLETED");
-  const tracedC = completed.filter(r =>
+  // Traced% is measured over the ARCHIVE era only — live (post-redesign)
+  // settlements carry no addresses and can never be "fully traced", so
+  // including them would make the rate fall as live data grows.
+  const archiveCompleted = D.trades.filter(r =>
+    r.status === "COMPLETED" && r.source !== "live");
+  const tracedC = archiveCompleted.filter(r =>
     r.seller_prl && r.seller_evm && r.buyer_prl && r.buyer_evm).length;
-  const tracedPct = completed.length ? (tracedC / completed.length * 100).toFixed(1) : "0";
+  const tracedPct = archiveCompleted.length
+    ? (tracedC / archiveCompleted.length * 100).toFixed(1) : "0";
 
   const k = [
-    { v: tracedPct + "%", l: "完整追溯率",
-      d: `${fmt(tracedC, 0)} / ${fmt(completed.length, 0)} 已完成` },
+    { v: tracedPct + "%", l: "完整追溯率（存档）",
+      d: `${fmt(tracedC, 0)} / ${fmt(archiveCompleted.length, 0)} 存档成交` },
     { v: compact(s.total_volume_prl), l: "PRL 累计成交",
       d: s.volume_24h_prl ? `+${compact(s.volume_24h_prl)} · 24h` : "", up: true },
     { v: compact(s.total_volume_usdc, true), l: "USDC 累计成交",
       d: s.volume_24h_usdc ? `+${compact(s.volume_24h_usdc, true)} · 24h` : "", up: true },
-    { v: fmt(m.active_offers, 0), l: "活跃挂单", d: "" },
+    { v: fmt(s.trades_24h, 0), l: "24h 成交笔数",
+      d: s.volume_24h_prl ? `${compact(s.volume_24h_prl)} PRL` : "" },
   ];
   $("#kpis").innerHTML = k.map(x =>
     `<div class="kpi">
@@ -205,6 +211,20 @@ function renderKpis() {
   // UTC/本地 toggle. Suffix tells the user which mode they're in.
   const g = formatTime(m.generated_at, "full");
   $("#freshness").textContent = `快照：${g} ${tzSuffix()} · ${fmt(tr, 0)} 笔`;
+
+  // Data-source banner: explain the post-redesign split once live rows exist.
+  const ds = m.data_source, ban = $("#ds-banner");
+  if (ban) {
+    const liveN = m.live_rows || 0;
+    if (ds && ds.note && liveN) {
+      const since = (ds.archive_until || "").slice(0, 10);
+      ban.innerHTML = `⚠ ${ds.note} 链上地址追溯数据截至 <b>${since}</b>`
+        + `（存档 ${fmt(m.archive_rows, 0)} 笔）；之后 ${fmt(liveN, 0)} 笔为新数据源成交。`;
+      ban.hidden = false;
+    } else {
+      ban.hidden = true;
+    }
+  }
 }
 
 function buildStatusFilter() {
@@ -349,15 +369,25 @@ function latestTradeMs() {
   return mx || Date.now();
 }
 function renderTopParties(side) {
-  // side: "buy" -> buyers (received PRL); "sell" -> sellers (sent PRL)
-  const cutoff = latestTradeMs() - 86400 * 1000;
+  // side: "buy" -> buyers (received PRL); "sell" -> sellers (sent PRL).
+  // These are address-based, so they only exist for the archive era.
+  // Anchor the 24h window to the latest ADDRESSED trade (not the newest
+  // overall trade, which is now an address-less live settlement) so the
+  // panel shows the final 24h of traced activity instead of going blank.
+  const keyOf = r => side === "buy"
+    ? (r.buyer_evm || r.buyer_prl) : (r.seller_evm || r.seller_prl);
+  let anchor = 0;
+  for (const r of D.trades) {
+    if (r.status !== "COMPLETED" || !r.time || !keyOf(r)) continue;
+    const t = new Date(r.time).getTime();
+    if (t > anchor) anchor = t;
+  }
+  const cutoff = (anchor || Date.now()) - 86400 * 1000;
   const acc = new Map();
   D.trades.forEach(r => {
     if (r.status !== "COMPLETED" || !r.time) return;
     if (new Date(r.time).getTime() < cutoff) return;
-    const key = side === "buy"
-      ? (r.buyer_evm || r.buyer_prl)
-      : (r.seller_evm || r.seller_prl);
+    const key = keyOf(r);
     if (!key) return;
     const cur = acc.get(key) || { addr: key, amt: 0, n: 0 };
     cur.amt += num(r.prl_amount);
@@ -403,7 +433,9 @@ function route() {
 window.addEventListener("hashchange", route);
 
 /* ===== trades table (10 cols) ===== */
-let tState = { sort: "id", dir: -1, page: 0, per: 50 };
+// Default sort by time desc (newest first). id is no longer a reliable
+// order key: post-redesign live rows have synthetic string ids ("L…").
+let tState = { sort: "time", dir: -1, page: 0, per: 50 };
 
 function filteredTrades() {
   const q = $("#f-search").value.trim().toLowerCase();
@@ -425,6 +457,7 @@ function filteredTrades() {
       const u = a => { const id = idOf(a); return id ? id.username : ""; };
       const hay = [r.id, r.seller_prl, r.seller_evm, r.buyer_prl, r.buyer_evm,
         r.deposit_txid, r.release_txid, r.refund_txid, r.usdc_tx_hash,
+        r.maker_username,
         u(r.seller_prl), u(r.seller_evm), u(r.buyer_prl), u(r.buyer_evm),
         labelOf(r.seller_prl), labelOf(r.seller_evm),
         labelOf(r.buyer_prl), labelOf(r.buyer_evm)]
@@ -465,12 +498,20 @@ function renderTrades() {
     return `<div class="party">${badge}<div class="addr-stack">
         <div class="a1">${a1}</div><div class="a2">${a2}</div></div></div>`;
   };
+  // Live (post-redesign) rows have only a maker username — no addresses,
+  // side, network, or tx hashes. Render the maker in the seller slot and
+  // mark the buyer side as undisclosed.
+  const makerCell = mk => mk
+    ? `<div class="party"><span class="maker-tag" title="挂单方 maker">ⓜ</span>`
+      + `<span class="addr">@${String(mk).replace(/</g, "&lt;")}</span></div>`
+    : `<span class="muted">—</span>`;
   $("#trades-body").innerHTML = slice.map(r => {
+    const live = r.source === "live";
     const t = formatTime(r.time, "short");
-    const sellerCell = partyCell(r.seller_prl, r.seller_evm,
-      r.maker_side === "SELL_PRL", r.network);
-    const buyerCell  = partyCell(r.buyer_prl, r.buyer_evm,
-      r.maker_side === "BUY_PRL", r.network);
+    const sellerCell = live ? makerCell(r.maker_username)
+      : partyCell(r.seller_prl, r.seller_evm, r.maker_side === "SELL_PRL", r.network);
+    const buyerCell  = live ? `<span class="muted" title="新数据源未公开">未公开</span>`
+      : partyCell(r.buyer_prl, r.buyer_evm, r.maker_side === "BUY_PRL", r.network);
     const txCell = (r.deposit_txid || r.release_txid || r.refund_txid || r.usdc_tx_hash)
       ? `<td class="txs">
            <span class="txs-toggle" data-tid="${r.id}">•••</span>
@@ -499,8 +540,11 @@ function renderTrades() {
           ? `<span class="muted">${fmtAmt(r.usdc_amount)}</span>`
           : fmtAmt(r.usdc_amount))
       : '<span class="muted">—</span>';
-    return `<tr>
-      <td class="id">${r.id}</td>
+    const idCell = live
+      ? `<span class="src-live" title="改版后新成交 · 仅 maker，无链上追溯">live</span>`
+      : r.id;
+    return `<tr${live ? ' class="row-live"' : ''}>
+      <td class="id">${idCell}</td>
       <td class="time">${t}</td>
       <td>${sideCell(r.maker_side)}</td>
       <td>${statusCell(r.status)}</td>

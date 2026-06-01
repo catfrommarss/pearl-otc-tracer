@@ -54,6 +54,18 @@ code{font-family:var(--mono);font-size:.85em;color:var(--ink2)}
 main{padding:14px 22px 32px;max-width:1280px;margin:0 auto}
 .view.hidden{display:none}
 
+/* ===== data-source banner ===== */
+.ds-banner{background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.30);
+  color:var(--ink2);border-radius:10px;padding:10px 14px;margin-bottom:14px;
+  font:12px/1.6 var(--mono)}
+.ds-banner b{color:var(--warn)}
+
+/* live (post-redesign) settlement markers */
+.src-live{display:inline-block;font:600 10px var(--mono);color:var(--info);
+  background:rgba(133,183,235,.12);border:1px solid rgba(133,183,235,.35);
+  border-radius:5px;padding:1px 6px;letter-spacing:.04em}
+tr.row-live td{background:rgba(133,183,235,.03)}
+
 /* ===== KPI STRIP (inside #view-trades) ===== */
 .kpis{position:relative;background:var(--card);border:1px solid var(--line);
   border-radius:12px;padding:18px 22px;display:grid;

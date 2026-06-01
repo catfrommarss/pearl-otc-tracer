@@ -10,6 +10,7 @@ backfill happens once and every later run only resolves new trades.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -220,92 +221,184 @@ def build_identities(offers, addresses):
     return pub, len(acc)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--max-pages", type=int, default=None,
-                    help="limit OTC pages (200 trades each) for testing")
-    ap.add_argument("--backfill", action="store_true",
-                    help="explicit full run (same as no --max-pages)")
-    ap.add_argument("--workers", type=int, default=6)
-    args = ap.parse_args()
+ISO = "%Y-%m-%dT%H:%M:%SZ"
 
-    t0 = time.time()
-    print("fetching OTC trades ...", flush=True)
-    trades = otc.settled_trades(max_pages=args.max_pages)
-    print(f"  {len(trades)} trades", flush=True)
 
-    aux = {}
-    for name, fn in (("prices", otc.public_prices), ("stats", otc.stats),
-                     ("public_stats", lambda: otc.public_stats(30)),
-                     ("offers", otc.offers), ("health", otc.health)):
+def _read_json(name, default):
+    p = os.path.join(DATA, name)
+    if os.path.exists(p):
         try:
-            aux[name] = fn()
-        except Exception as e:  # noqa: BLE001 - aux data is best-effort
-            print(f"  WARN {name}: {e}", flush=True)
-            aux[name] = None
+            with open(p, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:  # noqa: BLE001
+            return default
+    return default
 
-    os.makedirs(PEARL_CACHE, exist_ok=True)
-    os.makedirs(EVM_CACHE, exist_ok=True)
 
-    def resolver(h, net, amt):
-        return resolve_usdc(h, net, amt, EVM_CACHE)
+def _iso_to_epoch(s):
+    if not s:
+        return None
+    try:
+        return int(datetime.datetime.fromisoformat(
+            s.replace("Z", "+00:00")).timestamp())
+    except Exception:  # noqa: BLE001
+        return None
 
-    def work(tr):
-        return correlate(tr, PEARL_CACHE, resolver)
 
-    rows = []
-    done = 0
-    with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        for row in ex.map(work, trades):
-            rows.append(row)
-            done += 1
-            if done % 100 == 0:
-                print(f"  resolved {done}/{len(trades)} "
-                      f"({time.time()-t0:.0f}s)", flush=True)
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
 
-    rows.sort(key=lambda r: (r.get("id") or 0), reverse=True)
-    addresses = build_addresses(rows)
-    identities, id_total = build_identities(aux.get("offers"), addresses)
-    print(f"  identities: {len(identities)} published / {id_total} known",
-          flush=True)
 
-    # Derive resolution metrics straight from output fields (the old per-
-    # row `resolved` dict and `flags` array were dropped for size).
-    res = {
-        "pearl_resolved": sum(1 for r in rows
-                              if r.get("seller_prl") or r.get("escrow_prl")),
-        "evm_resolved":   sum(1 for r in rows if r.get("buyer_evm")),
-        "both_sides":     sum(1 for r in rows
-                              if (r.get("seller_prl") or r.get("seller_evm"))
-                              and (r.get("buyer_prl") or r.get("buyer_evm"))),
-        # all four legs present — the honest "fully traced" rate
-        "fully_traced":   sum(1 for r in rows
-                              if r.get("seller_prl") and r.get("seller_evm")
-                              and r.get("buyer_prl") and r.get("buyer_evm")),
+def live_to_row(s):
+    """Shape a thin settlement-feed record into a trade-like row.
+
+    The redesigned feed only carries time / maker(username) / prl / usdc /
+    price — no id, status, side, network, addresses, or tx hashes. We mark
+    it source:"live" and leave the untraceable fields null so the frontend
+    renders it as an untraced settlement carrying just the maker name."""
+    t = s.get("time")
+    return {
+        "id": "L" + (t or ""),
+        "source": "live",
+        "time": t,
+        "status": "COMPLETED",
+        "maker_username": s.get("maker"),
+        "maker_side": None,
+        "network": None,
+        "prl_amount": s.get("prl"),
+        "usdc_amount": s.get("usdc"),
+        "price_per_prl_usdc": s.get("price"),
+        "fee_prl": None,
+        "seller_prl": None, "seller_evm": None,
+        "buyer_prl": None, "buyer_evm": None,
+        "escrow_prl": None,
+        "deposit_txid": None, "release_txid": None,
+        "refund_txid": None, "usdc_tx_hash": None,
     }
 
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--max-pages", type=int, default=None, help="(unused)")
+    ap.add_argument("--backfill", action="store_true", help="(unused)")
+    ap.add_argument("--workers", type=int, default=6, help="(unused)")
+    ap.parse_args()
+
+    t0 = time.time()
+
+    # The rich api.pearl-otc.com backend is retired (502). We freeze the
+    # historical address-traced rows already in trades.json and only
+    # ingest the new thin settlement feed going forward.
+    existing = _read_json("trades.json", [])
+    for r in existing:
+        r.setdefault("source", "archive")
+    archive = [r for r in existing if r.get("source") != "live"]
+    prev_live = [r for r in existing if r.get("source") == "live"]
+    since = max((r["time"] for r in existing if r.get("time")), default=None)
+    print(f"archive={len(archive)} prev_live={len(prev_live)} since={since}",
+          flush=True)
+
+    print("fetching live settlements ...", flush=True)
+    try:
+        fresh = otc.live_settlements(since_iso=since)
+    except Exception as e:  # noqa: BLE001 - keep last good data on failure
+        print(f"  WARN live feed failed: {e}", flush=True)
+        fresh = []
+    print(f"  {len(fresh)} new settlements", flush=True)
+
+    # Content key at second precision (the archive stored microseconds, the
+    # live feed milliseconds, so the boundary settlement would otherwise
+    # appear twice). Used to keep live rows from duplicating archive ones.
+    def ckey(r):
+        return (_iso_to_epoch(r.get("time")),
+                round(_num(r.get("prl_amount")), 2),
+                round(_num(r.get("usdc_amount")), 2))
+    arch_keys = {ckey(r) for r in archive if r.get("time")}
+
+    # Merge live rows (previous + fresh), dedupe within live and vs archive.
+    live_by_key = {}
+    for r in prev_live:
+        if ckey(r) not in arch_keys:
+            live_by_key[ckey(r)] = r
+    for s in fresh:
+        row = live_to_row(s)
+        k = ckey(row)
+        if k not in arch_keys:
+            live_by_key[k] = row
+    live_rows = list(live_by_key.values())
+
+    rows = archive + live_rows
+    rows.sort(key=lambda r: (r.get("time") or ""), reverse=True)
+
+    # Addresses come only from archive rows (live rows have none), so this
+    # rebuild reproduces the frozen archive aggregation.
+    addresses = build_addresses(rows)
+    # Identities depended on the now-dead offers/reputation endpoints —
+    # preserve the committed mapping as-is.
+    identities = _read_json("identities.json", {})
+
+    completed = [r for r in rows if r.get("status") == "COMPLETED"]
+    latest_ep = max((_iso_to_epoch(r.get("time")) or 0 for r in rows),
+                    default=0)
+    cut24 = latest_ep - 86400
+    otc_stats = {
+        "total_volume_prl": round(sum(_num(r.get("prl_amount")) for r in completed), 2),
+        "total_volume_usdc": round(sum(_num(r.get("usdc_amount")) for r in completed), 2),
+        "total_trades_completed": len(completed),
+        "volume_24h_prl": round(sum(_num(r.get("prl_amount")) for r in completed
+                                    if (_iso_to_epoch(r.get("time")) or 0) >= cut24), 2),
+        "trades_24h": sum(1 for r in completed
+                          if (_iso_to_epoch(r.get("time")) or 0) >= cut24),
+    }
+
+    # Extend the price series from new live settlements (old /public-prices
+    # is dead, but every live settlement carries a price).
+    prices = _read_json("prices.json", [])
+    seen_t = {p.get("t") for p in prices}
+    for r in live_rows:
+        ep = _iso_to_epoch(r.get("time"))
+        pr = _num(r.get("price_per_prl_usdc"))
+        if ep and pr and ep not in seen_t:
+            prices.append({"t": ep, "p": pr})
+            seen_t.add(ep)
+    prices.sort(key=lambda x: x.get("t") or 0)
+
+    res = {
+        "fully_traced": sum(1 for r in rows
+                            if r.get("seller_prl") and r.get("seller_evm")
+                            and r.get("buyer_prl") and r.get("buyer_evm")),
+    }
     meta = {
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "generated_at": time.strftime(ISO, time.gmtime()),
         "trades": len(rows),
+        "archive_rows": len(archive),
+        "live_rows": len(live_rows),
         "unique_addresses": len(addresses),
-        "resolution": res,
-        "elapsed_s": round(time.time() - t0, 1),
-        "otc_stats": aux.get("stats"),
-        "public_stats": aux.get("public_stats"),
-        "health": aux.get("health"),
-        "active_offers": len(aux["offers"]) if aux.get("offers") else 0,
         "named_addresses": len(identities),
+        "resolution": res,
+        "otc_stats": otc_stats,
+        "data_source": {
+            "archive_until": max((r["time"] for r in archive if r.get("time")),
+                                 default=None),
+            "live_from": min((r["time"] for r in live_rows if r.get("time")),
+                             default=None),
+            "note": ("OTC 改版(2026-06)后公开接口移除了交易哈希："
+                     "archive 为可追溯链上地址的历史存档；live 为改版后新成交，"
+                     "仅含 maker 用户名 / 金额 / 价格，无法追溯地址。"),
+        },
+        "elapsed_s": round(time.time() - t0, 1),
     }
 
     _write("trades.json", rows)
     _write("addresses.json", addresses)
     _write("identities.json", identities)
-    _write("prices.json", aux.get("prices") or [])
-    # offers.json / stats.json removed: frontend never read them; offers
-    # count lives in meta.active_offers and stats lives in meta.otc_stats.
+    _write("prices.json", prices)
     _write("meta.json", meta)
 
-    print(json.dumps(meta, indent=1), flush=True)
+    print(json.dumps(meta, indent=1, ensure_ascii=False), flush=True)
     print(f"done in {time.time()-t0:.0f}s", flush=True)
     return 0
 
