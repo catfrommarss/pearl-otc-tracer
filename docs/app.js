@@ -1,7 +1,8 @@
 "use strict";
 /* Pearl OTC dashboard · T1 spec implementation. */
 
-const D = { trades: [], addresses: [], prices: [], meta: {}, identities: {} };
+const D = { trades: [], addresses: [], prices: [], meta: {}, identities: {},
+  entities: {}, whales: {}, safetrade: {}, market: {} };
 const addrIndex = new Map();
 const charts = {};        // Chart.js instances by canvas id, for destroy/redraw
 let chartsTabDrawn = false;
@@ -97,6 +98,18 @@ function unameBadge(a) {
   const tip = `@${id.username} · 信誉:${id.trust_tier || "?"} · 平台成交 ${id.trades_completed ?? "?"}`;
   return ` <span class="uname ${cls}" title="${tip}">@${id.username}</span>`;
 }
+// Entity labels from prlscan (Safetrade / bridge / pool / system / OTC).
+const ENTITY_CLASS = { system: "e-sys", exchange: "e-cex", bridge: "e-bridge",
+  bridge_treasury: "e-bridge", pool: "e-pool", pearl_otc: "e-otc" };
+function entityOf(a) { return a ? D.entities[a] : null; }
+function entityBadge(a) {
+  const e = entityOf(a);
+  if (!e || !e.label) return "";
+  // an OTC-username entity is already shown via unameBadge — skip dup
+  if ((e.kind || "") === "pearl_otc") return "";
+  const cls = ENTITY_CLASS[(e.kind || "system").toLowerCase()] || "e-sys";
+  return ` <span class="ent ${cls}" title="链上实体：${e.label}">${e.label}</span>`;
+}
 function txLink(chain, network, txid) {
   if (!txid) return "";
   const u = chain === "pearl"
@@ -113,7 +126,7 @@ function addrLink(a, network) {
   // data-addr lets the hover-highlight handler tag every occurrence of
   // the same address across the page.
   return `<a class="addr" data-addr="${a}" href="#address/${a}" title="${a}">${short(a)}</a>`
-    + unameBadge(a) + labelChip(a)
+    + unameBadge(a) + entityBadge(a) + labelChip(a)
     + ` <a class="copy" href="${u}" target="_blank" rel="noopener" title="浏览器中打开">↗</a>`
     + ` <span class="copy" data-copy="${a}" title="复制">⧉</span>`;
 }
@@ -160,13 +173,17 @@ async function ensureAddresses() {
 
 async function load() {
   // Eager: everything the default 成交 tab needs. Skip addresses.json.
-  const [t, p, m, ids, lab] = await Promise.all([
+  const [t, p, m, ids, lab, ent, wh, st, mk] = await Promise.all([
     _get("data/trades.json"), _get("data/prices.json"),
     _get("data/meta.json"), _get("data/identities.json"),
-    _get("data/labels.json")]);
+    _get("data/labels.json"), _get("data/entities.json"),
+    _get("data/whales.json"), _get("data/safetrade.json"),
+    _get("data/market.json")]);
   D.trades = t || []; D.prices = p || [];
   D.meta = m || {}; D.identities = ids || {};
   sharedLabels = lab || {};
+  D.entities = ent || {}; D.whales = wh || {};
+  D.safetrade = st || {}; D.market = mk || {};
   buildStatusFilter();
   renderKpis();
   route();
@@ -406,6 +423,78 @@ function renderTopParties(side) {
 }
 function renderTopBuyers() { renderTopParties("buy"); renderTopParties("sell"); }
 
+/* ===== whales / institutional accumulation tab ===== */
+const FLAG_CN = { whale: "巨鲸", accumulator: "累积", silent: "静默DCA",
+  absorb: "吸筹", fresh: "新巨鲸", hodl: "冷囤", off_otc: "场外建仓" };
+function nameCell(a) {
+  // compact: short addr (clickable) + username/entity/label badges
+  if (!a) return `<span class="muted">—</span>`;
+  return `<a class="addr" data-addr="${a}" href="#address/${a}" title="${a}">${short(a)}</a>`
+    + unameBadge(a) + entityBadge(a) + labelChip(a);
+}
+function renderWhales() {
+  const m = D.market || {}, cex = m.cex || {}, w = D.whales || {};
+  const conc = w.concentration || {};
+  // KPI strip: spread, OTC price, CEX price+vol, buy concentration
+  const sp = m.spread_pct;
+  const spCls = sp == null ? "" : (sp >= 0 ? "up" : "dn");
+  const k = [
+    { v: sp == null ? "—" : `${sp >= 0 ? "+" : ""}${sp}%`, l: "OTC 对 CEX 价差",
+      d: sp == null ? "" : (sp >= 0 ? "OTC 溢价" : "OTC 折价"), up: sp >= 0, dn: sp < 0 },
+    { v: m.otc_recent_price ? m.otc_recent_price : "—", l: "OTC 近价 (USDC)", d: "" },
+    { v: cex.last ? cex.last : "—", l: "SafeTrade 价 (USDT)",
+      d: cex.vol_24h_prl ? `24h ${compact(cex.vol_24h_prl)} PRL` : "" },
+    { v: conc.top5_pct ? conc.top5_pct + "%" : "—", l: "买入集中度 (前5)",
+      d: conc.n_net_buyers ? `${fmt(conc.n_net_buyers, 0)} 净买家` : "" },
+  ];
+  $("#whale-kpis").innerHTML = k.map(x =>
+    `<div class="kpi"><div class="v ${x.up ? "up-v" : x.dn ? "dn-v" : ""}">${x.v}</div>`
+    + `<div class="l">${x.l}</div>${x.d ? `<div class="d">${x.d}</div>` : ""}</div>`).join("");
+
+  const buyers = w.buyers || [];
+  $("#whale-sub").textContent =
+    `${fmt(buyers.length, 0)} 个净买家 · 全网买入 ${compact(conc.total_buy_prl)} PRL · `
+    + `前10 集中度 ${conc.top10_pct || "—"}%`;
+  $("#whale-body").innerHTML = buyers.map((b, i) => {
+    const flags = (b.flags || []).filter(f => FLAG_CN[f])
+      .map(f => `<span class="wf wf-${f}">${FLAG_CN[f]}</span>`).join(" ");
+    const ch = b.chain || {};
+    const bal = ch.balance_prl != null ? fmtAmt(ch.balance_prl) : "—";
+    return `<tr data-addr="${b.address}">
+      <td class="id">${i + 1}</td>
+      <td>${nameCell(b.address)}</td>
+      <td class="num" style="color:var(--pri)">${fmtAmt(b.net_prl)}</td>
+      <td class="num muted">${b.n_buy}/${b.n_sell}</td>
+      <td class="num">${bal}</td>
+      <td>${flags || '<span class="muted">—</span>'}</td>
+      <td class="time">${b.last || ""}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">暂无数据</td></tr>`;
+  $$("#whale-body tr[data-addr]").forEach(tr =>
+    tr.onclick = e => { if (!e.target.closest("a,.copy")) location.hash = "address/" + tr.dataset.addr; });
+
+  // SafeTrade large flows
+  const st = D.safetrade || {}, flows = st.flows || [];
+  const body = $("#safetrade-body");
+  if (!flows.length) {
+    body.innerHTML = `<div class="muted" style="padding:12px 0">近期无大额进出</div>`;
+  } else {
+    const head = st.balance_prl != null
+      ? `<div class="sub" style="margin-bottom:8px">交易所余额 ${fmtAmt(st.balance_prl)} PRL · 历史净流入 ${fmtAmt((st.ext_received_prl||0)-(st.ext_sent_prl||0))} PRL</div>`
+      : "";
+    body.innerHTML = head + `<div class="st-feed">` + flows.slice(0, 40).map(f => {
+      const inb = f.kind === "deposit";
+      return `<div class="st-row">
+        <span class="st-dir ${inb ? "in" : "out"}">${inb ? "转入↘" : "提现↗"}</span>
+        <span class="st-amt">${fmtAmt(f.prl)} PRL</span>
+        <span class="st-cp">${f.counterparty ? nameCell(f.counterparty) : '<span class="muted">—</span>'}</span>
+        <span class="time">${formatTime(new Date((f.time||0)*1000).toISOString(), "short")}</span>
+      </div>`;
+    }).join("") + `</div>`;
+    $$("#safetrade-body .addr").forEach(el => {});
+  }
+}
+
 /* ===== routing ===== */
 function route() {
   const h = location.hash.slice(1) || "trades";
@@ -415,6 +504,7 @@ function route() {
   const v = $("#view-" + h);
   (v || $("#view-trades")).classList.remove("hidden");
   if (h === "trades") { renderTrades(); renderTradesCharts(); renderTopBuyers(); }
+  else if (h === "whales") renderWhales();
   else if (h === "addresses") { ensureAddresses().then(renderAddresses); }
   else if (h === "charts") drawCharts();
 }
@@ -478,10 +568,10 @@ function renderTrades() {
       ? `<span class="maker-tag" title="挂单方 (maker)">ⓜ</span>`
       : "";
     const a1 = prl
-      ? `<a href="#address/${prl}" data-addr="${prl}" title="${prl}">${short(prl)}</a>${unameBadge(prl)}${labelChip(prl)}`
+      ? `<a href="#address/${prl}" data-addr="${prl}" title="${prl}">${short(prl)}</a>${unameBadge(prl)}${entityBadge(prl)}${labelChip(prl)}`
       : `<span class="muted">—</span>`;
     const a2 = evm
-      ? `<a href="#address/${evm}" data-addr="${evm}" title="${evm}">${short(evm)}</a>${unameBadge(evm)}${labelChip(evm)}`
+      ? `<a href="#address/${evm}" data-addr="${evm}" title="${evm}">${short(evm)}</a>${unameBadge(evm)}${entityBadge(evm)}${labelChip(evm)}`
       : `<span class="muted">—</span>`;
     return `<div class="party">${badge}<div class="addr-stack">
         <div class="a1">${a1}</div><div class="a2">${a2}</div></div></div>`;

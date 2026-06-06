@@ -19,8 +19,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 import otc
 import enrich
+import chain
+import market as market_mod
 from evm import resolve_usdc, usdc_match
+from whales import build_whales
+from enrich import FEE_ADDR
 from correlate import correlate
+from common import cache_get
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -33,6 +38,7 @@ EVM_CACHE = os.path.join(ROOT, "cache", "evm")
 IDENTITIES_CACHE = os.path.join(ROOT, "cache", "identities.json")
 PRL_TXS_CACHE = os.path.join(ROOT, "cache", "prl_txs")     # prlscan tx cache
 EVM_MATCH_CACHE = os.path.join(ROOT, "cache", "evm_match")  # usdc amount+time
+ENTITY_LABEL_CACHE = os.path.join(ROOT, "cache", "entity_labels")  # addr->label
 
 
 def _write(name, obj):
@@ -287,13 +293,16 @@ def enrich_live(live_rows):
     """Recover buyer/seller addresses for live rows (post-redesign).
 
     PRL leg (authoritative): match to the OTC fee-address funnel on prlscan
-    by exact gross amount + nearest time → seller_prl / buyer_prl.
+    by exact gross amount + nearest time → seller_prl / buyer_prl. Cheap
+    (cached prlscan), so it runs on the FULL backlog every time.
     USDC leg (heuristic): global amount+time match on Arbitrum, accepted
-    only when the candidate is UNIQUE (round amounts collide, so a
-    non-unique window would risk a wrong attribution). Everything attached
-    here is flagged inferred:true so the UI can mark it as reconstructed
-    rather than reported by the platform."""
-    todo = [r for r in live_rows if not r.get("seller_prl")]
+    only when the candidate is UNIQUE. This is RPC-heavy (~seconds each),
+    so it is BUDGET-CAPPED per run (USDC_BUDGET) to keep the hourly job
+    bounded — any backlog drains over subsequent runs. Everything attached
+    is flagged inferred:true so the UI marks it as reconstructed."""
+    USDC_BUDGET = 60  # max NEW (uncached) usdc matches per run
+    todo = [r for r in live_rows if not r.get("seller_prl")
+            or not r.get("seller_evm")]
     if not todo:
         return
     os.makedirs(PRL_TXS_CACHE, exist_ok=True)
@@ -304,38 +313,46 @@ def enrich_live(live_rows):
     by_grains, _ = enrich.build_pearl_index(since, PRL_TXS_CACHE)
 
     prl_ok = evm_ok = 0
+    usdc_spent = 0
     for r in todo:
         ep = _iso_to_epoch(r.get("time"))
-        # --- PRL leg: exact gross grains + nearest time within 30 min ---
-        g = round(_num(r.get("prl_amount")) * enrich.GRAINS)
-        best, bd = None, 10 ** 9
-        for c in by_grains.get(g, []):
-            if c.get("time") is None:
-                continue
-            d = abs(c["time"] - (ep or 0))
-            if d < bd:
-                bd, best = d, c
-        if best and bd <= 1800 and best.get("seller_prl") and best.get("buyer_prl"):
-            r["seller_prl"] = best["seller_prl"]
-            r["buyer_prl"] = best["buyer_prl"]
-            r["escrow_prl"] = best.get("escrow_prl")
-            r["release_txid"] = best.get("release_txid")
-            r["deposit_txid"] = best.get("deposit_txid")
-            r["inferred"] = True
-            prl_ok += 1
-        # --- USDC leg: unique-candidate global match only ---
-        try:
-            m = usdc_match(r.get("network") or "ARBITRUM",
-                           r.get("usdc_amount"), ep, EVM_MATCH_CACHE)
-        except Exception:  # noqa: BLE001
-            m = None
-        if m and m.get("n_candidates") == 1:
-            r["seller_evm"] = m["seller_evm"]
-            r["buyer_evm"] = m["buyer_evm"]
-            r["usdc_token"] = m.get("token")
-            r["inferred"] = True
-            evm_ok += 1
-    print(f"  enriched PRL {prl_ok}/{len(todo)} · USDC(unique) {evm_ok}/{len(todo)}",
+        # --- PRL leg (full backlog): exact gross grains + nearest time ---
+        if not r.get("seller_prl"):
+            g = round(_num(r.get("prl_amount")) * enrich.GRAINS)
+            best, bd = None, 10 ** 9
+            for c in by_grains.get(g, []):
+                if c.get("time") is None:
+                    continue
+                d = abs(c["time"] - (ep or 0))
+                if d < bd:
+                    bd, best = d, c
+            if best and bd <= 1800 and best.get("seller_prl") and best.get("buyer_prl"):
+                r["seller_prl"] = best["seller_prl"]
+                r["buyer_prl"] = best["buyer_prl"]
+                r["escrow_prl"] = best.get("escrow_prl")
+                r["release_txid"] = best.get("release_txid")
+                r["deposit_txid"] = best.get("deposit_txid")
+                r["inferred"] = True
+                prl_ok += 1
+        # --- USDC leg (budget-capped): unique-candidate global match ---
+        if not r.get("seller_evm") and usdc_spent < USDC_BUDGET:
+            key = f"m_arbitrum_{round(_num(r.get('usdc_amount'))*1e6)}_{ep}"
+            uncached = cache_get(EVM_MATCH_CACHE, key) is None
+            try:
+                m = usdc_match(r.get("network") or "ARBITRUM",
+                               r.get("usdc_amount"), ep, EVM_MATCH_CACHE)
+            except Exception:  # noqa: BLE001
+                m = None
+            if uncached:
+                usdc_spent += 1
+            if m and m.get("n_candidates") == 1:
+                r["seller_evm"] = m["seller_evm"]
+                r["buyer_evm"] = m["buyer_evm"]
+                r["usdc_token"] = m.get("token")
+                r["inferred"] = True
+                evm_ok += 1
+    print(f"  enriched PRL {prl_ok} · USDC(unique) {evm_ok} "
+          f"(usdc budget spent {usdc_spent}/{USDC_BUDGET}) of {len(todo)}",
           flush=True)
 
 
@@ -406,6 +423,60 @@ def main():
     # preserve the committed mapping as-is.
     identities = _read_json("identities.json", {})
 
+    # ===== intelligence layer (whales / entities / SafeTrade / market) =====
+    # Each block is best-effort + cached so a prlscan/CEX hiccup never
+    # breaks the core refresh.
+    whales = _read_json("whales.json", {})
+    try:
+        whales = build_whales(rows, identities)
+        c = whales.get("concentration", {})
+        print(f"  whales: {len(whales.get('buyers', []))} ranked · "
+              f"top5={c.get('top5_pct')}% net-buyers={c.get('n_net_buyers')}",
+              flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"  WARN whales: {e}", flush=True)
+
+    entities = _read_json("entities.json", {})
+    try:
+        os.makedirs(ENTITY_LABEL_CACHE, exist_ok=True)
+        ents = chain.build_entities(chain.holders(top_n=150), ENTITY_LABEL_CACHE,
+                                    extra_addrs=[FEE_ADDR, chain.SAFETRADE])
+        if ents:
+            entities = ents
+        print(f"  entities labeled: {len(entities)}", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"  WARN entities: {e}", flush=True)
+
+    safetrade = _read_json("safetrade.json", {})
+    try:
+        # last ~21 days of large SafeTrade flows (>= 1000 PRL)
+        since = (max((_iso_to_epoch(r.get("time")) or 0 for r in rows),
+                     default=0)) - 21 * 86400
+        flows, st_info = chain.safetrade_flows(since, 1000 * enrich.GRAINS,
+                                               PRL_TXS_CACHE)
+        flows.sort(key=lambda f: -(f.get("time") or 0))
+        safetrade = {
+            "address": chain.SAFETRADE,
+            "balance_prl": round(_num((st_info or {}).get("balance_grains"))
+                                 / enrich.GRAINS, 2),
+            "ext_received_prl": round(_num((st_info or {}).get("external_received_grains"))
+                                      / enrich.GRAINS, 2),
+            "ext_sent_prl": round(_num((st_info or {}).get("external_sent_grains"))
+                                  / enrich.GRAINS, 2),
+            "flows": flows[:200],
+        }
+        print(f"  safetrade: {len(flows)} large flows", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"  WARN safetrade: {e}", flush=True)
+
+    market = _read_json("market.json", {})
+    try:
+        market = market_mod.build_market(rows)
+        print(f"  market: cex last={market.get('cex',{}).get('last')} "
+              f"spread={market.get('spread_pct')}%", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"  WARN market: {e}", flush=True)
+
     completed = [r for r in rows if r.get("status") == "COMPLETED"]
     latest_ep = max((_iso_to_epoch(r.get("time")) or 0 for r in rows),
                     default=0)
@@ -456,6 +527,9 @@ def main():
                      "其地址由本工具链上反查恢复（PRL 经 prlscan 费用漏斗、"
                      "USDC 按金额+时间唯一匹配），标记为 inferred。"),
         },
+        "whales": len((whales or {}).get("buyers", [])),
+        "entities": len(entities or {}),
+        "spread_pct": (market or {}).get("spread_pct"),
         "elapsed_s": round(time.time() - t0, 1),
     }
 
@@ -463,6 +537,10 @@ def main():
     _write("addresses.json", addresses)
     _write("identities.json", identities)
     _write("prices.json", prices)
+    _write("whales.json", whales)
+    _write("entities.json", entities)
+    _write("safetrade.json", safetrade)
+    _write("market.json", market)
     _write("meta.json", meta)
 
     print(json.dumps(meta, indent=1, ensure_ascii=False), flush=True)

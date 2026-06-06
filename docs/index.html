@@ -8,9 +8,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <meta http-equiv="cache-control" content="no-cache" />
-<link rel="stylesheet" href="style.css?v=t14" />
+<link rel="stylesheet" href="style.css?v=t15" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
-<script src="app.js?v=t14" defer></script>
+<script src="app.js?v=t15" defer></script>
 </head>
 <body>
 <header class="topbar">
@@ -26,6 +26,7 @@
 
 <nav class="tabs">
   <a href="#trades" class="tab" data-tab="trades">成交</a>
+  <a href="#whales" class="tab" data-tab="whales">巨鲸</a>
   <a href="#addresses" class="tab" data-tab="addresses">地址</a>
   <a href="#charts" class="tab" data-tab="charts">图表</a>
 </nav>
@@ -102,6 +103,29 @@
       </table>
     </div>
     <div class="pager" id="t-pager"></div>
+  </section>
+
+  <!-- WHALES / 机构累积 -->
+  <section id="view-whales" class="view hidden">
+    <section class="kpis" id="whale-kpis"></section>
+    <div class="two">
+      <div class="card">
+        <h3>巨鲸 / 机构累积榜 · 按净买入 PRL</h3>
+        <div class="sub" id="whale-sub">—</div>
+        <div class="tablewrap">
+          <table id="whale-table"><thead><tr>
+            <th>#</th><th>地址 / 名称</th>
+            <th class="num">净买入 PRL</th><th class="num">买/卖</th>
+            <th class="num">链上余额</th><th>标记</th><th>最近</th>
+          </tr></thead><tbody id="whale-body"></tbody></table>
+        </div>
+      </div>
+      <div class="card">
+        <h3>SafeTrade 资金流 · 大额(≥1k PRL)</h3>
+        <div class="sub">流入交易所=潜在抛压 · 流出=接货/提现</div>
+        <div id="safetrade-body"></div>
+      </div>
+    </div>
   </section>
 
   <!-- ADDRESSES -->

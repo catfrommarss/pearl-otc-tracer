@@ -201,6 +201,39 @@ td.time{color:var(--ink3);font:11.5px var(--mono)}
 .addr-stack .a2{color:var(--ink3)}
 .addr-stack a:hover{color:var(--pri)}
 
+/* on-chain entity labels (Safetrade / bridge / pool / system) */
+.ent{display:inline-block;font:600 10.5px var(--mono);padding:1px 6px;
+  border-radius:8px;border:1px solid var(--line);vertical-align:middle}
+.ent.e-cex,.ent.e-sys{color:var(--warn);background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.4)}
+.ent.e-bridge{color:var(--base);background:rgba(91,141,239,.12);border-color:rgba(91,141,239,.4)}
+.ent.e-pool{color:#c084fc;background:rgba(192,132,252,.12);border-color:rgba(192,132,252,.4)}
+.ent.e-otc{color:var(--pri);background:rgba(74,222,128,.10);border-color:rgba(74,222,128,.3)}
+
+/* whale leaderboard */
+#whale-kpis{margin-bottom:14px}
+.kpi .v.up-v{color:var(--pri)} .kpi .v.dn-v{color:var(--neg)}
+#whale-table td{vertical-align:middle}
+.wf{display:inline-block;font:600 10px var(--mono);padding:1px 6px;border-radius:8px;
+  margin:1px 2px 1px 0;border:1px solid var(--line)}
+.wf-whale{color:var(--neg);background:rgba(248,113,113,.14);border-color:rgba(248,113,113,.4)}
+.wf-accumulator{color:var(--pri);background:rgba(74,222,128,.12);border-color:rgba(74,222,128,.35)}
+.wf-silent{color:var(--info);background:rgba(133,183,235,.12);border-color:rgba(133,183,235,.35)}
+.wf-absorb{color:var(--warn);background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.4)}
+.wf-fresh{color:#c084fc;background:rgba(192,132,252,.12);border-color:rgba(192,132,252,.4)}
+.wf-hodl{color:var(--pri);background:rgba(74,222,128,.18);border-color:rgba(74,222,128,.5)}
+.wf-off_otc{color:var(--warn);background:rgba(251,191,36,.16);border-color:rgba(251,191,36,.5)}
+
+/* SafeTrade flow feed */
+.st-feed{display:flex;flex-direction:column}
+.st-row{display:grid;grid-template-columns:64px 96px 1fr auto;gap:8px;align-items:center;
+  padding:6px 4px;border-bottom:1px solid var(--row);font-size:12px}
+.st-row:last-child{border-bottom:none}
+.st-dir{font:600 11px var(--mono);text-align:center;border-radius:4px;padding:1px 4px}
+.st-dir.in{color:var(--neg);background:rgba(248,113,113,.12)}
+.st-dir.out{color:var(--pri);background:rgba(74,222,128,.12)}
+.st-amt{font:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);text-align:right}
+.st-cp{font:11.5px var(--mono);color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
 /* party cell: optional ⓜ maker badge + addr stack, side by side */
 .party{display:flex;gap:6px;align-items:flex-start}
 .maker-tag{display:inline-block;font:600 10px var(--mono);color:var(--warn);
