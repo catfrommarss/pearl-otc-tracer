@@ -223,6 +223,41 @@ td.time{color:var(--ink3);font:11.5px var(--mono)}
 .wf-hodl{color:var(--pri);background:rgba(74,222,128,.18);border-color:rgba(74,222,128,.5)}
 .wf-off_otc{color:var(--warn);background:rgba(251,191,36,.16);border-color:rgba(251,191,36,.5)}
 
+/* SafeTrade feed filter controls */
+.st-controls{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.st-controls label{font:11px var(--mono);color:var(--ink2)}
+.st-controls input,.st-controls select{background:var(--bg);color:var(--ink);
+  border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:12px var(--mono)}
+.st-controls input{width:90px}
+.st-controls input:focus,.st-controls select:focus{outline:none;border-color:var(--pri)}
+.st-controls .count{color:var(--ink3);font:11px var(--mono);margin-left:auto}
+
+/* ===== flow graph page ===== */
+#view-flow{position:relative}
+.flow-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.flow-bar input[type=search]{flex:1;min-width:260px;background:var(--card);
+  color:var(--ink);border:1px solid var(--line);border-radius:8px;
+  padding:8px 12px;font:13px var(--mono)}
+.flow-bar input[type=search]:focus{outline:none;border-color:var(--pri)}
+.flow-focus{font:12px var(--mono);color:var(--ink2)}
+.flow-focus.err{color:var(--warn)}
+.flow-legend{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  font:11px var(--mono);color:var(--ink3);margin-left:auto}
+.lg-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-left:8px;margin-right:2px;vertical-align:middle}
+.lg-edge{display:inline-block;width:16px;height:0;border-top:2px solid;margin-left:8px;margin-right:2px;vertical-align:middle}
+.lg-edge.in{border-color:var(--pri)} .lg-edge.out{border-color:var(--neg)}
+#flow-graph{position:relative;height:72vh;min-height:460px;background:var(--card);
+  border:1px solid var(--line);border-radius:12px}
+.flow-empty{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  text-align:center;color:var(--ink3);font:12px/1.9 var(--mono);
+  pointer-events:none;max-width:520px}
+.flow-tip{position:fixed;z-index:50;pointer-events:none;background:rgba(14,16,20,.97);
+  border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+  font:11.5px var(--mono);color:var(--ink2);box-shadow:0 6px 24px rgba(0,0,0,.5);max-width:280px}
+.flow-tip b{color:var(--ink)}
+.flow-link{font:12px var(--mono);color:var(--pri);cursor:pointer}
+.flow-link:hover{text-decoration:underline}
+
 /* SafeTrade flow feed */
 .st-feed{display:flex;flex-direction:column}
 .st-row{display:grid;grid-template-columns:64px 96px 1fr auto;gap:8px;align-items:center;

@@ -449,10 +449,11 @@ def main():
 
     safetrade = _read_json("safetrade.json", {})
     try:
-        # last ~21 days of large SafeTrade flows (>= 1000 PRL)
+        # last ~21 days of large SafeTrade flows (>= 10000 PRL — only the
+        # very large moves; the frontend filters further up from there)
         since = (max((_iso_to_epoch(r.get("time")) or 0 for r in rows),
                      default=0)) - 21 * 86400
-        flows, st_info = chain.safetrade_flows(since, 1000 * enrich.GRAINS,
+        flows, st_info = chain.safetrade_flows(since, 10000 * enrich.GRAINS,
                                                PRL_TXS_CACHE)
         flows.sort(key=lambda f: -(f.get("time") or 0))
         safetrade = {

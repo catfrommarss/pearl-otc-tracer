@@ -473,40 +473,55 @@ function renderWhales() {
   $$("#whale-body tr[data-addr]").forEach(tr =>
     tr.onclick = e => { if (!e.target.closest("a,.copy")) location.hash = "address/" + tr.dataset.addr; });
 
-  // SafeTrade large flows
-  const st = D.safetrade || {}, flows = st.flows || [];
+  // SafeTrade large flows (free-amount + direction filter)
+  renderSafetrade();
+}
+
+function renderSafetrade() {
+  const st = D.safetrade || {}, all = st.flows || [];
   const body = $("#safetrade-body");
+  if (!body) return;
+  const minEl = $("#st-min"), dirEl = $("#st-dir");
+  const min = Math.max(0, num(minEl && minEl.value) || 0);
+  const dir = (dirEl && dirEl.value) || "";
+  const flows = all.filter(f => num(f.prl) >= min && (!dir || f.kind === dir));
+  const cnt = $("#st-count");
+  if (cnt) cnt.textContent = `${fmt(flows.length, 0)} / ${fmt(all.length, 0)} 笔`;
+  const head = st.balance_prl != null
+    ? `<div class="sub" style="margin-bottom:8px">交易所余额 ${fmtAmt(st.balance_prl)} PRL · 历史净流入 ${fmtAmt((st.ext_received_prl || 0) - (st.ext_sent_prl || 0))} PRL</div>`
+    : "";
   if (!flows.length) {
-    body.innerHTML = `<div class="muted" style="padding:12px 0">近期无大额进出</div>`;
-  } else {
-    const head = st.balance_prl != null
-      ? `<div class="sub" style="margin-bottom:8px">交易所余额 ${fmtAmt(st.balance_prl)} PRL · 历史净流入 ${fmtAmt((st.ext_received_prl||0)-(st.ext_sent_prl||0))} PRL</div>`
-      : "";
-    body.innerHTML = head + `<div class="st-feed">` + flows.slice(0, 40).map(f => {
-      const inb = f.kind === "deposit";
-      return `<div class="st-row">
-        <span class="st-dir ${inb ? "in" : "out"}">${inb ? "转入↘" : "提现↗"}</span>
-        <span class="st-amt">${fmtAmt(f.prl)} PRL</span>
-        <span class="st-cp">${f.counterparty ? nameCell(f.counterparty) : '<span class="muted">—</span>'}</span>
-        <span class="time">${formatTime(new Date((f.time||0)*1000).toISOString(), "short")}</span>
-      </div>`;
-    }).join("") + `</div>`;
-    $$("#safetrade-body .addr").forEach(el => {});
+    body.innerHTML = head + `<div class="muted" style="padding:12px 0">无符合条件的大额进出</div>`;
+    return;
   }
+  body.innerHTML = head + `<div class="st-feed">` + flows.slice(0, 60).map(f => {
+    const inb = f.kind === "deposit";
+    return `<div class="st-row">
+      <span class="st-dir ${inb ? "in" : "out"}">${inb ? "转入↘" : "提现↗"}</span>
+      <span class="st-amt">${fmtAmt(f.prl)} PRL</span>
+      <span class="st-cp">${f.counterparty ? nameCell(f.counterparty) : '<span class="muted">—</span>'}</span>
+      <span class="time">${formatTime(new Date((f.time || 0) * 1000).toISOString(), "short")}</span>
+    </div>`;
+  }).join("") + `</div>`;
 }
 
 /* ===== routing ===== */
 function route() {
   const h = location.hash.slice(1) || "trades";
   if (h.startsWith("address/")) { showDetail(decodeURIComponent(h.slice(8))); return; }
+  const base = h.split("/")[0];   // "flow/prl1…" -> "flow"
   $$(".view").forEach(v => v.classList.add("hidden"));
-  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === h));
-  const v = $("#view-" + h);
+  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === base));
+  const v = $("#view-" + base);
   (v || $("#view-trades")).classList.remove("hidden");
-  if (h === "trades") { renderTrades(); renderTradesCharts(); renderTopBuyers(); }
-  else if (h === "whales") renderWhales();
-  else if (h === "addresses") { ensureAddresses().then(renderAddresses); }
-  else if (h === "charts") drawCharts();
+  if (base === "trades") { renderTrades(); renderTradesCharts(); renderTopBuyers(); }
+  else if (base === "whales") renderWhales();
+  else if (base === "flow") {
+    const seed = h.includes("/") ? decodeURIComponent(h.slice(h.indexOf("/") + 1)) : "";
+    if (window.renderFlow) window.renderFlow(seed);
+  }
+  else if (base === "addresses") { ensureAddresses().then(renderAddresses); }
+  else if (base === "charts") drawCharts();
 }
 window.addEventListener("hashchange", route);
 
@@ -779,6 +794,7 @@ function showDetail(addr) {
       ${labelOf(addr) ? `<span class="tag-chip big">${labelOf(addr)}</span>` : ""}
       <span class="addr mono">${addr}</span>
       <span class="copy" data-copy="${addr}">⧉ 复制</span>
+      ${!isE ? `<a class="flow-link" href="#flow/${encodeURIComponent(addr)}">在资金流图查看 ⇲</a>` : ""}
       <a href="${scan}" target="_blank" rel="noopener">浏览器打开 ↗</a>
     </div>
     ${labelBlock}
@@ -938,6 +954,21 @@ $("#btn-back").onclick = () => {
     () => { tState.page = 0; renderTrades(); }));
 ["a-search", "a-chain", "a-sort"].forEach(id =>
   $("#" + id).addEventListener("input", () => { aState.page = 0; renderAddresses(); }));
+// SafeTrade flow feed: free-amount + direction filter (persisted)
+(() => {
+  const minEl = $("#st-min"), dirEl = $("#st-dir");
+  if (minEl) {
+    const saved = localStorage.getItem("st-min");
+    if (saved) minEl.value = saved;
+    minEl.addEventListener("input", () => {
+      localStorage.setItem("st-min", minEl.value);
+      if (typeof renderSafetrade === "function") renderSafetrade();
+    });
+  }
+  if (dirEl) dirEl.addEventListener("change", () => {
+    if (typeof renderSafetrade === "function") renderSafetrade();
+  });
+})();
 $("#btn-csv").onclick = csv;
 $$("#trades-table th[data-sort]").forEach(th => th.onclick = () => {
   const k = th.dataset.sort;

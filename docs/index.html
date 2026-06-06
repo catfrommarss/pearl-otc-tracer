@@ -8,9 +8,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <meta http-equiv="cache-control" content="no-cache" />
-<link rel="stylesheet" href="style.css?v=t15" />
+<link rel="stylesheet" href="style.css?v=t16" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
-<script src="app.js?v=t15" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/layout-base@2.0.1/layout-base.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/cose-base@2.2.0/cose-base.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-fcose@2.2.0/cytoscape-fcose.js" defer></script>
+<script src="app.js?v=t16" defer></script>
+<script src="flow.js?v=t16" defer></script>
 </head>
 <body>
 <header class="topbar">
@@ -27,6 +32,7 @@
 <nav class="tabs">
   <a href="#trades" class="tab" data-tab="trades">成交</a>
   <a href="#whales" class="tab" data-tab="whales">巨鲸</a>
+  <a href="#flow" class="tab" data-tab="flow">资金流</a>
   <a href="#addresses" class="tab" data-tab="addresses">地址</a>
   <a href="#charts" class="tab" data-tab="charts">图表</a>
 </nav>
@@ -121,11 +127,44 @@
         </div>
       </div>
       <div class="card">
-        <h3>SafeTrade 资金流 · 大额(≥1k PRL)</h3>
+        <h3>SafeTrade 资金流 · 大额</h3>
         <div class="sub">流入交易所=潜在抛压 · 流出=接货/提现</div>
+        <div class="st-controls">
+          <label>≥ <input id="st-min" type="number" min="10000" step="1000" value="10000" /> PRL</label>
+          <select id="st-dir"><option value="">全部</option>
+            <option value="deposit">仅转入</option>
+            <option value="withdraw">仅提现</option></select>
+          <span class="count" id="st-count"></span>
+        </div>
         <div id="safetrade-body"></div>
       </div>
     </div>
+  </section>
+
+  <!-- FLOW / 资金流追溯图 -->
+  <section id="view-flow" class="view hidden">
+    <div class="flow-bar">
+      <input id="flow-search" type="search"
+        placeholder="输入 prl1 地址 / @用户名 / txid 开始追溯…" />
+      <button id="flow-go" class="btn">追溯</button>
+      <button id="flow-reset" class="btn">重置视图</button>
+      <span class="flow-focus" id="flow-focus"></span>
+      <span class="flow-legend">
+        <span class="lg-dot" style="background:#4ade80"></span>OTC用户
+        <span class="lg-dot" style="background:#fbbf24"></span>交易所
+        <span class="lg-dot" style="background:#5b8def"></span>桥
+        <span class="lg-dot" style="background:#c084fc"></span>矿池
+        <span class="lg-dot" style="background:#9ca3af"></span>未知
+        <span class="lg-edge in"></span>流入
+        <span class="lg-edge out"></span>流出
+      </span>
+    </div>
+    <div id="flow-graph"></div>
+    <div id="flow-empty" class="flow-empty">
+      点节点展开一跳 · 双击进地址详情 · 滚轮缩放 · 拖拽平移<br>
+      数据实时来自 prlscan。先在上方搜索一个地址，或从「巨鲸 / 地址」页点「在资金流图查看」。
+    </div>
+    <div id="flow-tip" class="flow-tip" hidden></div>
   </section>
 
   <!-- ADDRESSES -->
