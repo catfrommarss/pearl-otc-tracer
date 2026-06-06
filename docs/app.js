@@ -496,11 +496,15 @@ function renderSafetrade() {
   }
   body.innerHTML = head + `<div class="st-feed">` + flows.slice(0, 60).map(f => {
     const inb = f.kind === "deposit";
+    const tx = f.txid
+      ? `<a class="st-tx" href="${EXP}/tx/${f.txid}?network=mainnet" target="_blank" rel="noopener" title="${f.txid}">${f.txid.slice(0, 8)}… ↗</a>`
+      : `<span class="muted">—</span>`;
     return `<div class="st-row">
       <span class="st-dir ${inb ? "in" : "out"}">${inb ? "转入↘" : "提现↗"}</span>
       <span class="st-amt">${fmtAmt(f.prl)} PRL</span>
       <span class="st-cp">${f.counterparty ? nameCell(f.counterparty) : '<span class="muted">—</span>'}</span>
       <span class="time">${formatTime(new Date((f.time || 0) * 1000).toISOString(), "short")}</span>
+      ${tx}
     </div>`;
   }).join("") + `</div>`;
 }
