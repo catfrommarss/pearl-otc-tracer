@@ -9,6 +9,10 @@
 const PS = "https://api.prlscan.com";
 const G = 1e8;                       // grains per PRL
 const EXPLORER = "https://explorer.pearlresearch.ai";
+// Addresses with <= this many txs get an EXACT full scan (every tx body
+// fetched). Above it, we fall back to top-by-size sampling so exchange/hub
+// wallets (thousands of txs) don't stall the browser or hammer the API.
+const FULL_SCAN_CAP = 400;
 
 const F = {
   entities: {}, idents: {}, userIndex: {},
@@ -40,6 +44,10 @@ function flowToast(msg) {
   el.textContent = "⚠ " + msg;
   el.classList.add("err");
   setTimeout(() => { el.classList.remove("err"); el.textContent = prev; }, 2600);
+}
+function flowStatus(msg) {     // transient non-error progress text in the bar
+  const el = document.getElementById("flow-focus");
+  if (el) { el.classList.remove("err"); el.textContent = msg; }
 }
 
 /* ---- data + prlscan fetch ---- */
@@ -193,35 +201,53 @@ async function expand(addr) {
   F.expanded.add(addr);
   const myId = entOf(addr).id;
 
+  // How many txs does this address have? (cheap — cached from addNode.) Decides
+  // exact full scan vs. sampling.
+  let txCount = 0;
+  try { const info = await addrInfo(addr); txCount = info ? (Number(info.tx_count) || 0) : 0; } catch {}
+  const fullScan = txCount > 0 && txCount <= FULL_SCAN_CAP;
+  flowStatus(fullScan ? `追溯中…全量扫描 ${txCount} 笔`
+                      : `追溯中…采样（共 ${txCount || "?"} 笔）`);
+
   // 1) Page through the (cheap) tx list. Each list item carries delta_grains,
   //    so we learn every tx's direction + size WITHOUT fetching its body. This
   //    is what lets us reach rare-but-large OUTFLOWS that a recent-window scan
   //    misses: an accumulating whale may have e.g. 155 inbound txs vs only 8
   //    outbound — its big consolidations sit deep in history, far past the
   //    most-recent page.
+  //    Full scan reads all pages; sampling reads a bounded recent window.
+  const maxPages = fullScan ? 50 : 6;     // limit=100 → full(<=400) is <=4 pages
   let list = [];
   try {
     let cursor = null;
-    for (let p = 0; p < 6; p++) {
-      const d = await pget("/v1/addresses/" + encodeURIComponent(addr) + "/txs?limit=50"
+    for (let p = 0; p < maxPages; p++) {
+      const d = await pget("/v1/addresses/" + encodeURIComponent(addr) + "/txs?limit=100"
         + (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""));
       const items = (d && d.items) || [];
       list.push(...items);
       cursor = d && d.next_cursor;
       if (!cursor || !items.length) break;
     }
-  } catch { flowToast("prlscan 暂时不可用"); F.expanded.delete(addr); return; }
-  if (!list.length) return;
+  } catch { flowToast("prlscan 暂时不可用"); F.expanded.delete(addr); setFocus(addr); return; }
+  if (!list.length) { setFocus(addr); return; }
 
-  // 2) Fetch tx bodies only for the biggest txs in EACH direction, so inflows
-  //    and outflows are both represented regardless of how lopsided the counts.
-  const mag = it => Math.abs(it.delta_grains || 0);
-  const byMag = (a, b) => mag(b) - mag(a);
-  const inTxs = list.filter(it => (it.delta_grains || 0) > 0).sort(byMag).slice(0, 20);
-  const outTxs = list.filter(it => (it.delta_grains || 0) < 0).sort(byMag).slice(0, 20);
+  // 2) Pick which txs to resolve (a body fetch each, the one real cost).
+  //    Full scan: every tx → exact per-counterparty totals.
+  //    Sampling: the biggest txs in EACH direction, so inflows and outflows
+  //    are both represented no matter how lopsided the counts.
+  let picked;
+  if (fullScan) {
+    picked = list;
+  } else {
+    const mag = it => Math.abs(it.delta_grains || 0);
+    const byMag = (a, b) => mag(b) - mag(a);
+    const inTxs = list.filter(it => (it.delta_grains || 0) > 0).sort(byMag).slice(0, 20);
+    const outTxs = list.filter(it => (it.delta_grains || 0) < 0).sort(byMag).slice(0, 20);
+    picked = [...inTxs, ...outTxs];
+  }
 
   const agg = {};   // counterparty entityId -> {addr,in,out,ent}
-  await mapLimit([...inTxs, ...outTxs], 6, async it => {
+  await mapLimit(picked, 8, async it => {
     const tx = await txInfo(it.txid);
     if (!tx) return;
     const ins = tx.inputs || [], outs = tx.outputs || [];
@@ -267,6 +293,10 @@ async function expand(addr) {
     if (c.in >= floor) addEdge(c.ent.id, myId, c.in, "in");
     if (c.out >= floor) addEdge(myId, c.ent.id, c.out, "out");
   }
+
+  setFocus(addr);     // clear the "追溯中…" status back to the focus label
+  if (!fullScan && txCount > FULL_SCAN_CAP)
+    flowToast(`交易量大（${txCount} 笔），已按金额采样展示`);
 }
 
 function setFocus(addr) {
