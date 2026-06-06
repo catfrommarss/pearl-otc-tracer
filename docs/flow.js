@@ -130,9 +130,15 @@ function ensureCy() {
       } },
       { selector: "node:selected", style: { "border-width": 3, "border-color": "#4ade80" } },
       { selector: "edge", style: {
-        "curve-style": "bezier", "width": "mapData(prl, 0, 200000, 1.2, 9)",
-        "target-arrow-shape": "triangle", "arrow-scale": 0.9,
-        "opacity": 0.75, "line-cap": "round",
+        "curve-style": "bezier", "width": "mapData(prl, 0, 200000, 1, 5)",
+        "target-arrow-shape": "triangle", "arrow-scale": 0.7,
+        "opacity": 0.8, "line-cap": "round",
+        // transfer amount on the edge (direction encoded by color)
+        "label": ele => fnum(ele.data("prl")),
+        "font-family": "'JetBrains Mono', monospace", "font-size": 9,
+        "color": "#cbd5e1", "text-rotation": "autorotate",
+        "text-background-color": "#0a0b0e", "text-background-opacity": 0.85,
+        "text-background-padding": 2, "min-zoomed-font-size": 7,
       } },
       { selector: "edge.in", style: { "line-color": "#4ade80", "target-arrow-color": "#4ade80" } },
       { selector: "edge.out", style: { "line-color": "#f87171", "target-arrow-color": "#f87171" } },
