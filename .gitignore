@@ -7,3 +7,5 @@ __pycache__/
 collector/probe*.py
 collector/*_page.txt
 _offers_probe.json
+# brainstorming visual-companion mockups (transient)
+.superpowers/
