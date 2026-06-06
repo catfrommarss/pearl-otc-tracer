@@ -192,18 +192,42 @@ async function expand(addr) {
   if (!addr || F.expanded.has(addr)) return;
   F.expanded.add(addr);
   const myId = entOf(addr).id;
-  let items = [];
-  try { const d = await pget("/v1/addresses/" + encodeURIComponent(addr) + "/txs?limit=50"); items = (d && d.items) || []; }
-  catch { flowToast("prlscan 暂时不可用"); F.expanded.delete(addr); return; }
-  items = items.slice(0, 25);
+
+  // 1) Page through the (cheap) tx list. Each list item carries delta_grains,
+  //    so we learn every tx's direction + size WITHOUT fetching its body. This
+  //    is what lets us reach rare-but-large OUTFLOWS that a recent-window scan
+  //    misses: an accumulating whale may have e.g. 155 inbound txs vs only 8
+  //    outbound — its big consolidations sit deep in history, far past the
+  //    most-recent page.
+  let list = [];
+  try {
+    let cursor = null;
+    for (let p = 0; p < 6; p++) {
+      const d = await pget("/v1/addresses/" + encodeURIComponent(addr) + "/txs?limit=50"
+        + (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""));
+      const items = (d && d.items) || [];
+      list.push(...items);
+      cursor = d && d.next_cursor;
+      if (!cursor || !items.length) break;
+    }
+  } catch { flowToast("prlscan 暂时不可用"); F.expanded.delete(addr); return; }
+  if (!list.length) return;
+
+  // 2) Fetch tx bodies only for the biggest txs in EACH direction, so inflows
+  //    and outflows are both represented regardless of how lopsided the counts.
+  const mag = it => Math.abs(it.delta_grains || 0);
+  const byMag = (a, b) => mag(b) - mag(a);
+  const inTxs = list.filter(it => (it.delta_grains || 0) > 0).sort(byMag).slice(0, 20);
+  const outTxs = list.filter(it => (it.delta_grains || 0) < 0).sort(byMag).slice(0, 20);
+
   const agg = {};   // counterparty entityId -> {addr,in,out,ent}
-  await mapLimit(items, 4, async it => {
+  await mapLimit([...inTxs, ...outTxs], 6, async it => {
     const tx = await txInfo(it.txid);
     if (!tx) return;
     const ins = tx.inputs || [], outs = tx.outputs || [];
     const focalIsInput = ins.some(i => i.prev_address === addr);
     if (focalIsInput) {
-      // SENT — each output to a different entity is a recipient (out-edge)
+      // SENT — each output to another entity is a recipient (out-edge)
       for (const o of outs) {
         const a = o.address;
         if (!a || a === addr) continue;
@@ -226,11 +250,22 @@ async function expand(addr) {
       }
     }
   });
-  const arr = Object.values(agg).sort((a, b) => (b.in + b.out) - (a.in + a.out)).slice(0, 12);
-  for (const c of arr) {
+
+  // 3) Show the top counterparties per direction (deduped), so outflows always
+  //    surface even when inbound activity dwarfs them. A dust floor relative to
+  //    the biggest flow keeps the graph focused (hides 1-PRL test txs etc.).
+  const all = Object.values(agg);
+  let maxMag = 0;
+  for (const c of all) maxMag = Math.max(maxMag, c.in, c.out);
+  const floor = Math.max(G, maxMag * 0.001);    // >= 1 PRL, and >= 0.1% of the largest flow
+  const topIn = all.filter(c => c.in >= floor).sort((a, b) => b.in - a.in).slice(0, 10);
+  const topOut = all.filter(c => c.out >= floor).sort((a, b) => b.out - a.out).slice(0, 8);
+  const pick = new Map();
+  for (const c of [...topIn, ...topOut]) pick.set(c.ent.id, c);
+  for (const c of pick.values()) {
     await addNode(c.addr, false);
-    if (c.in > 0) addEdge(c.ent.id, myId, c.in, "in");
-    if (c.out > 0) addEdge(myId, c.ent.id, c.out, "out");
+    if (c.in >= floor) addEdge(c.ent.id, myId, c.in, "in");
+    if (c.out >= floor) addEdge(myId, c.ent.id, c.out, "out");
   }
 }
 
