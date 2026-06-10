@@ -7,17 +7,20 @@ Detectors (grounded in the real PRL distribution):
   silent       >= 5 buys and zero sells (patient DCA)
   absorb       took >= 25% of some ISO-week's total OTC buy volume
   fresh        bought >= 50k PRL within 48h of first OTC appearance
-Chain flags (top candidates):
-  hodl         external_sent_grains == 0 (never sent value out; cold stack)
-  off_otc      on-chain balance >> OTC net-buy and mined == 0 (sourced
+Chain flags (top candidates), at ENTITY level (own addr + co-spend
+partners + detected cold wallets, see cluster.py):
+  hodl         value never left the entity (no external sends, or the big
+               sends all went to the entity's own cold wallets)
+  off_otc      entity holdings >> OTC net-buy and mined == 0 (sourced
                off-desk, e.g. SafeTrade/P2P, and parked)
 """
 from __future__ import annotations
 
 import datetime
 
-from enrich import GRAINS
+from enrich import GRAINS, FEE_ADDR
 from chain import address_info
+from cluster import cluster_entity
 
 
 def _num(x):
@@ -45,7 +48,8 @@ def _isoweek(t):
     return f"{d[0]}-W{d[1]:02d}"
 
 
-def build_whales(rows, identities, enrich_top=50, out_top=150):
+def build_whales(rows, identities, enrich_top=50, out_top=150,
+                 entities=None, tx_cache=None, cluster_top=25):
     completed = [r for r in rows if r.get("status") == "COMPLETED"]
 
     agg = {}
@@ -134,8 +138,20 @@ def build_whales(rows, identities, enrich_top=50, out_top=150):
 
     res.sort(key=lambda x: -x["net_prl"])
 
+    # addresses that clustering must never merge into a whale's entity:
+    # every OTC participant/escrow, the fee funnel, and labeled entities.
+    no_merge = {FEE_ADDR}
+    for r in rows:
+        for k in ("seller_prl", "buyer_prl", "escrow_prl"):
+            if r.get(k):
+                no_merge.add(r[k])
+    for e in (entities or {}):
+        no_merge.add(e)
+    names = {a for a, rec in (identities or {}).items() if rec.get("username")}
+    claimed = set()
+
     # chain-enrich the top candidates
-    for a in res[:enrich_top]:
+    for rank, a in enumerate(res[:enrich_top]):
         info = address_info(a["address"])
         if not info:
             continue
@@ -149,6 +165,33 @@ def build_whales(rows, identities, enrich_top=50, out_top=150):
             "label": info.get("label"),
             "is_miner": mined > 0,
         }
+
+        # ---- entity clustering (top slice only; precision-first) ----
+        # claimed: members already attributed to a higher-ranked whale —
+        # first come, first served (res is net_prl-desc), so one address is
+        # never counted into two entities' holdings.
+        if tx_cache and rank < cluster_top and a["net_prl"] >= 50000:
+            try:
+                cl = cluster_entity(
+                    a["address"], info, tx_cache=tx_cache,
+                    exclude=(no_merge | claimed) - {a["address"]}, names=names)
+            except Exception:  # noqa: BLE001 - clustering is best-effort
+                cl = None
+            if cl:
+                a["cluster"] = cl
+                claimed.update(cl["addrs"])
+                claimed.update(c["address"] for c in cl["cold"])
+                a["chain"]["entity_balance_prl"] = cl["holdings_prl"]
+                # entity-level hodl: external sends are (nearly) fully
+                # explained by transfers into the entity's own cold wallets
+                sent_prl = ext_sent / GRAINS
+                if sent_prl > 0 and cl["out_to_cluster_prl"] >= 0.9 * sent_prl:
+                    a["chain"]["hodl"] = True
+                # off_otc keyed on entity holdings, not the single address
+                a["chain"]["off_otc"] = (
+                    cl["holdings_prl"] > a["net_prl"] * 1.5
+                    and mined == 0 and cl["holdings_prl"] > 50000)
+
         if a["chain"]["hodl"]:
             a["flags"].append("hodl")
         if a["chain"]["off_otc"]:

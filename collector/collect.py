@@ -289,22 +289,26 @@ def live_to_row(s):
     }
 
 
-def enrich_live(live_rows):
+def enrich_live(live_rows, known_evm=None):
     """Recover buyer/seller addresses for live rows (post-redesign).
 
     PRL leg (authoritative): match to the OTC fee-address funnel on prlscan
     by exact gross amount + nearest time → seller_prl / buyer_prl. Cheap
     (cached prlscan), so it runs on the FULL backlog every time.
     USDC leg (heuristic): global amount+time match on Arbitrum, accepted
-    only when the candidate is UNIQUE. This is RPC-heavy (~seconds each),
-    so it is BUDGET-CAPPED per run (USDC_BUDGET) to keep the hourly job
-    bounded — any backlog drains over subsequent runs. Everything attached
-    is flagged inferred:true so the UI marks it as reconstructed."""
-    USDC_BUDGET = 60  # max NEW (uncached) usdc matches per run
+    when the candidate is UNIQUE — or, among several candidates, exactly
+    ONE involves an EVM address already seen in resolved trades (the
+    known-participant prior; see evm._known_unique). RPC-heavy, so NEW
+    lookups are BUDGET-CAPPED per run (USDC_BUDGET); backlog drains over
+    subsequent runs. Everything attached is flagged inferred:true."""
+    USDC_BUDGET = 60  # max RPC-hitting usdc matches per run
     todo = [r for r in live_rows if not r.get("seller_prl")
             or not r.get("seller_evm")]
     if not todo:
         return
+    # transfers already attributed to a settlement THIS run — prevents one
+    # on-chain transfer from being assigned to two same-amount rows
+    consumed = set()
     os.makedirs(PRL_TXS_CACHE, exist_ok=True)
     os.makedirs(EVM_MATCH_CACHE, exist_ok=True)
     since = min(_iso_to_epoch(r["time"]) or 0 for r in todo) - 3600
@@ -337,20 +341,37 @@ def enrich_live(live_rows):
         # --- USDC leg (budget-capped): unique-candidate global match ---
         if not r.get("seller_evm") and usdc_spent < USDC_BUDGET:
             key = f"m_arbitrum_{round(_num(r.get('usdc_amount'))*1e6)}_{ep}"
-            uncached = cache_get(EVM_MATCH_CACHE, key) is None
+            c = cache_get(EVM_MATCH_CACHE, key)
+            # budget counts every query that will actually hit the RPC:
+            # uncached entries AND legacy ambiguous entries (no "cands"),
+            # which usdc_match re-queries once to persist their candidates.
+            rpc_hit = c is None or (bool(c) and not c.get("cands")
+                                    and c.get("n_candidates", 0) > 1
+                                    and not c.get("known_unique"))
             try:
                 m = usdc_match(r.get("network") or "ARBITRUM",
-                               r.get("usdc_amount"), ep, EVM_MATCH_CACHE)
+                               r.get("usdc_amount"), ep, EVM_MATCH_CACHE,
+                               known=known_evm, consumed=consumed)
             except Exception:  # noqa: BLE001
                 m = None
-            if uncached:
+            if rpc_hit:
                 usdc_spent += 1
-            if m and m.get("n_candidates") == 1:
+            if m and (m.get("n_candidates") == 1 or m.get("known_unique")):
                 r["seller_evm"] = m["seller_evm"]
                 r["buyer_evm"] = m["buyer_evm"]
                 r["usdc_token"] = m.get("token")
                 r["inferred"] = True
+                if m.get("known_unique"):
+                    r["usdc_match_by"] = "known_participant"
                 evm_ok += 1
+                if m.get("block") is not None:
+                    consumed.add((m.get("token"), m.get("block")))
+                # extend the prior ONLY with strong (truly unique) evidence —
+                # backfilling known from known_unique inferences would let one
+                # wrong acceptance cascade into more wrong acceptances.
+                if known_evm is not None and m.get("n_candidates") == 1:
+                    known_evm.add(m["seller_evm"])
+                    known_evm.add(m["buyer_evm"])
     print(f"  enriched PRL {prl_ok} · USDC(unique) {evm_ok} "
           f"(usdc budget spent {usdc_spent}/{USDC_BUDGET}) of {len(todo)}",
           flush=True)
@@ -408,8 +429,15 @@ def main():
 
     # Recover addresses for live rows the redesign stripped of tx hashes.
     # Best-effort + cached: a prlscan / RPC outage must not crash refresh.
+    # known_evm seeds the USDC disambiguation prior with every EVM address
+    # already attributed in resolved trades (archive + previously enriched).
+    known_evm = set()
+    for r in archive + live_rows:
+        for k in ("seller_evm", "buyer_evm"):
+            if r.get(k):
+                known_evm.add(str(r[k]).lower())
     try:
-        enrich_live(live_rows)
+        enrich_live(live_rows, known_evm=known_evm)
     except Exception as e:  # noqa: BLE001
         print(f"  WARN enrichment failed: {e}", flush=True)
 
@@ -425,17 +453,8 @@ def main():
 
     # ===== intelligence layer (whales / entities / SafeTrade / market) =====
     # Each block is best-effort + cached so a prlscan/CEX hiccup never
-    # breaks the core refresh.
-    whales = _read_json("whales.json", {})
-    try:
-        whales = build_whales(rows, identities)
-        c = whales.get("concentration", {})
-        print(f"  whales: {len(whales.get('buyers', []))} ranked · "
-              f"top5={c.get('top5_pct')}% net-buyers={c.get('n_net_buyers')}",
-              flush=True)
-    except Exception as e:  # noqa: BLE001
-        print(f"  WARN whales: {e}", flush=True)
-
+    # breaks the core refresh. Entities come FIRST: whale clustering uses
+    # the label map as a never-merge guard.
     entities = _read_json("entities.json", {})
     try:
         os.makedirs(ENTITY_LABEL_CACHE, exist_ok=True)
@@ -446,6 +465,44 @@ def main():
         print(f"  entities labeled: {len(entities)}", flush=True)
     except Exception as e:  # noqa: BLE001
         print(f"  WARN entities: {e}", flush=True)
+
+    whales = _read_json("whales.json", {})
+    try:
+        whales = build_whales(rows, identities, entities=entities,
+                              tx_cache=PRL_TXS_CACHE)
+        c = whales.get("concentration", {})
+        n_cl = sum(1 for b in whales.get("buyers", []) if b.get("cluster"))
+        print(f"  whales: {len(whales.get('buyers', []))} ranked · "
+              f"top5={c.get('top5_pct')}% net-buyers={c.get('n_net_buyers')} "
+              f"· clustered {n_cl}", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"  WARN whales: {e}", flush=True)
+
+    # clusters.json: cold wallets / co-spend partners of ranked whales, so
+    # the flow graph can label them ("@name·冷" etc.) instead of "未知".
+    clusters = _read_json("clusters.json", {})
+    try:
+        cl_map = {}
+        for b in whales.get("buyers", []):
+            cl = b.get("cluster")
+            if not cl:
+                continue
+            owner_name = b.get("username") or b["address"][:12]
+            # setdefault: buyers are net-desc, so the highest-ranked whale
+            # keeps a member if anything ever double-claims (belt+braces on
+            # top of the claimed-set in whales.py)
+            for c in cl.get("cold", []):
+                cl_map.setdefault(c["address"], {
+                    "owner": b["address"], "owner_name": owner_name,
+                    "kind": "cold"})
+            for a2 in cl.get("addrs", []):
+                cl_map.setdefault(a2, {
+                    "owner": b["address"], "owner_name": owner_name,
+                    "kind": "same"})
+        clusters = cl_map
+        print(f"  clusters: {len(clusters)} linked addrs", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"  WARN clusters: {e}", flush=True)
 
     safetrade = _read_json("safetrade.json", {})
     try:
@@ -540,6 +597,7 @@ def main():
     _write("prices.json", prices)
     _write("whales.json", whales)
     _write("entities.json", entities)
+    _write("clusters.json", clusters)
     _write("safetrade.json", safetrade)
     _write("market.json", market)
     _write("meta.json", meta)

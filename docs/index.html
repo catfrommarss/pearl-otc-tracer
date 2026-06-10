@@ -8,14 +8,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <meta http-equiv="cache-control" content="no-cache" />
-<link rel="stylesheet" href="style.css?v=t20" />
+<link rel="stylesheet" href="style.css?v=t21" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/layout-base@2.0.1/layout-base.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/cose-base@2.2.0/cose-base.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-fcose@2.2.0/cytoscape-fcose.js" defer></script>
-<script src="app.js?v=t20" defer></script>
-<script src="flow.js?v=t20" defer></script>
+<script src="app.js?v=t21" defer></script>
+<script src="flow.js?v=t21" defer></script>
 </head>
 <body>
 <header class="topbar">
@@ -147,6 +147,12 @@
       <input id="flow-search" type="search"
         placeholder="输入 prl1 地址 / @用户名 / txid 开始追溯…" />
       <button id="flow-go" class="btn">追溯</button>
+      <button id="flow-trace" class="btn" title="沿最大流出逐跳自动追踪，直到交易所/囤币端点">追踪流向</button>
+      <select id="flow-window" title="只统计窗口内的转账">
+        <option value="0">全部时间</option>
+        <option value="30">近 30 天</option>
+        <option value="7">近 7 天</option>
+      </select>
       <button id="flow-reset" class="btn">重置视图</button>
       <span class="flow-focus" id="flow-focus"></span>
       <span class="flow-legend">
@@ -154,6 +160,7 @@
         <span class="lg-dot" style="background:#fbbf24"></span>交易所
         <span class="lg-dot" style="background:#5b8def"></span>桥
         <span class="lg-dot" style="background:#c084fc"></span>矿池
+        <span class="lg-dot" style="background:#a7b4c7"></span>关联/冷
         <span class="lg-dot" style="background:#9ca3af"></span>未知
         <span class="lg-edge in"></span>流入
         <span class="lg-edge out"></span>流出
@@ -161,10 +168,11 @@
     </div>
     <div id="flow-graph"></div>
     <div id="flow-empty" class="flow-empty">
-      点节点展开一跳 · 双击进地址详情 · 滚轮缩放 · 拖拽平移<br>
+      点节点展开一跳 · 点边看转账明细 · 双击进地址详情 · 滚轮缩放 · 拖拽平移<br>
       数据实时来自 prlscan。先在上方搜索一个地址，或从「巨鲸 / 地址」页点「在资金流图查看」。
     </div>
     <div id="flow-tip" class="flow-tip" hidden></div>
+    <div id="flow-panel" class="flow-panel" hidden></div>
   </section>
 
   <!-- ADDRESSES -->

@@ -459,7 +459,18 @@ function renderWhales() {
     const flags = (b.flags || []).filter(f => FLAG_CN[f])
       .map(f => `<span class="wf wf-${f}">${FLAG_CN[f]}</span>`).join(" ");
     const ch = b.chain || {};
-    const bal = ch.balance_prl != null ? fmtAmt(ch.balance_prl) : "—";
+    // entity-level holdings (own addr + co-spend partners + cold wallets,
+    // see collector/cluster.py) when clustered; single-address otherwise
+    let bal = ch.balance_prl != null ? fmtAmt(ch.balance_prl) : "—";
+    const cl = b.cluster;
+    if (cl && ch.entity_balance_prl != null) {
+      const nLink = (cl.addrs || []).length + (cl.cold || []).length;
+      const coldSum = (cl.cold || []).reduce((s, c) => s + (c.balance_prl || 0), 0);
+      const tip = `本址 ${fmtAmt(ch.balance_prl)} + 关联 ${nLink} 地址`
+        + (coldSum ? `（冷钱包 ${fmtAmt(coldSum)}）` : "");
+      bal = `<span title="${tip}">${fmtAmt(ch.entity_balance_prl)}`
+        + `<span class="cl-mark">+${nLink}址</span></span>`;
+    }
     return `<tr data-addr="${b.address}">
       <td class="id">${i + 1}</td>
       <td>${nameCell(b.address)}</td>
@@ -499,10 +510,14 @@ function renderSafetrade() {
     const tx = f.txid
       ? `<a class="st-tx" href="${EXP}/tx/${f.txid}?network=mainnet" target="_blank" rel="noopener" title="${f.txid}">${f.txid.slice(0, 8)}… ↗</a>`
       : `<span class="muted">—</span>`;
+    // counterparty pierced through an exchange deposit address → mark it
+    const via = f.via
+      ? ` <span class="st-via" title="经充值地址 ${f.via} 归集入热钱包">中转</span>`
+      : "";
     return `<div class="st-row">
       <span class="st-dir ${inb ? "in" : "out"}">${inb ? "转入↘" : "提现↗"}</span>
       <span class="st-amt">${fmtAmt(f.prl)} PRL</span>
-      <span class="st-cp">${f.counterparty ? nameCell(f.counterparty) : '<span class="muted">—</span>'}</span>
+      <span class="st-cp">${f.counterparty ? nameCell(f.counterparty) + via : '<span class="muted">—</span>'}</span>
       <span class="time">${formatTime(new Date((f.time || 0) * 1000).toISOString(), "short")}</span>
       ${tx}
     </div>`;
