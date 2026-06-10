@@ -338,16 +338,22 @@ def enrich_live(live_rows, known_evm=None):
                 r["deposit_txid"] = best.get("deposit_txid")
                 r["inferred"] = True
                 prl_ok += 1
-        # --- USDC leg (budget-capped): unique-candidate global match ---
-        if not r.get("seller_evm") and usdc_spent < USDC_BUDGET:
+        # --- USDC leg: cached results are FREE; only RPC hits are budgeted.
+        # The budget gate must never block cache reads — an earlier version
+        # gated the whole block on usdc_spent, so once 60 RPC queries were
+        # spent, rows whose results already sat in cache (e.g. resolved by a
+        # previous CI run) were skipped too, and a data overwrite could shed
+        # hundreds of already-resolved rows with no self-healing.
+        if not r.get("seller_evm"):
             key = f"m_arbitrum_{round(_num(r.get('usdc_amount'))*1e6)}_{ep}"
             c = cache_get(EVM_MATCH_CACHE, key)
-            # budget counts every query that will actually hit the RPC:
-            # uncached entries AND legacy ambiguous entries (no "cands"),
-            # which usdc_match re-queries once to persist their candidates.
+            # an RPC hit = uncached, or a legacy ambiguous entry (no "cands")
+            # that usdc_match re-queries once to persist its candidates
             rpc_hit = c is None or (bool(c) and not c.get("cands")
                                     and c.get("n_candidates", 0) > 1
                                     and not c.get("known_unique"))
+            if rpc_hit and usdc_spent >= USDC_BUDGET:
+                continue                      # defer to a later run
             try:
                 m = usdc_match(r.get("network") or "ARBITRUM",
                                r.get("usdc_amount"), ep, EVM_MATCH_CACHE,
