@@ -17,6 +17,7 @@ partners + detected cold wallets, see cluster.py):
 from __future__ import annotations
 
 import datetime
+import re
 
 from enrich import GRAINS, FEE_ADDR
 from chain import address_info
@@ -28,6 +29,17 @@ def _num(x):
         return float(x)
     except (TypeError, ValueError):
         return 0.0
+
+
+# Analyst naming convention for sub-wallets of one entity: "<entity>-0x<hex>"
+# (e.g. "FalconX集群-0x735", "FalconX集群-0x15a"). The board rolls these up
+# into "<entity>"; the flow graph keeps them as separate labeled nodes.
+_SUBWALLET = re.compile(r"^(.+?)-0x[0-9a-fA-F]{2,}$")
+
+
+def _group(label):
+    m = _SUBWALLET.match(label or "")
+    return m.group(1) if m else label
 
 
 def _ep(t):
@@ -49,15 +61,40 @@ def _isoweek(t):
 
 
 def build_whales(rows, identities, enrich_top=50, out_top=150,
-                 entities=None, tx_cache=None, cluster_top=25):
+                 entities=None, tx_cache=None, cluster_top=25, labels=None):
+    """labels: addr -> analyst label (docs/data/labels.json). Addresses that
+    share a label are ONE entity on the board: a trade's buyer is keyed by
+    the label of its Pearl OR EVM address, so a cluster's sub-wallets (e.g.
+    five FalconX deposit wallets, each with its own PRL receive address)
+    roll up into a single row with pooled net-buy and pooled holdings."""
     completed = [r for r in rows if r.get("status") == "COMPLETED"]
+    labels = labels or {}
 
     agg = {}
 
-    def slot(a):
-        return agg.setdefault(a, {
-            "address": a, "bought": 0.0, "sold": 0.0, "n_buy": 0, "n_sell": 0,
-            "first": None, "last": None, "buys": [], "weeks": {}})
+    def ekey(prl, evm):
+        lab = labels.get(prl) or labels.get(evm)
+        if lab:
+            return "lbl:" + _group(lab)
+        return prl        # unlabeled: keyed by Pearl address (None = skip)
+
+    def slot(k):
+        s = agg.get(k)
+        if s is None:
+            s = agg[k] = {
+                "address": k if not k.startswith("lbl:") else None,
+                "label": k[4:] if k.startswith("lbl:") else None,
+                "members": {},        # addr -> trade count (label entities)
+                "bought": 0.0, "sold": 0.0, "n_buy": 0, "n_sell": 0,
+                "first": None, "last": None, "buys": [], "weeks": {}}
+        return s
+
+    def member(s, *addrs):
+        if s["label"] is None:
+            return
+        for a in addrs:
+            if a:
+                s["members"][a] = s["members"].get(a, 0) + 1
 
     def touch(s, t):
         if not t:
@@ -71,9 +108,12 @@ def build_whales(rows, identities, enrich_top=50, out_top=150,
     for r in completed:
         prl = _num(r.get("prl_amount"))
         t = r.get("time")
-        bp, sp = r.get("buyer_prl"), r.get("seller_prl")
-        if bp:
-            s = slot(bp)
+        bp, be = r.get("buyer_prl"), r.get("buyer_evm")
+        sp, se = r.get("seller_prl"), r.get("seller_evm")
+        bk, sk = ekey(bp, be), ekey(sp, se)
+        if bk:
+            s = slot(bk)
+            member(s, bp, be)
             s["bought"] += prl
             s["n_buy"] += 1
             s["buys"].append((_ep(t), prl))
@@ -82,11 +122,20 @@ def build_whales(rows, identities, enrich_top=50, out_top=150,
                 s["weeks"][w] = s["weeks"].get(w, 0) + prl
                 week_total[w] = week_total.get(w, 0) + prl
             touch(s, t)
-        if sp:
-            s = slot(sp)
+        if sk:
+            s = slot(sk)
+            member(s, sp, se)
             s["sold"] += prl
             s["n_sell"] += 1
             touch(s, t)
+
+    # label entities: the primary address (for linking / chain enrichment)
+    # is the busiest Pearl member, else the busiest member of any chain
+    for s in agg.values():
+        if s["label"] is not None:
+            ms = sorted(s["members"].items(), key=lambda kv: -kv[1])
+            prl_ms = [a for a, _ in ms if a.startswith("prl1")]
+            s["address"] = prl_ms[0] if prl_ms else (ms[0][0] if ms else None)
 
     # market-wide buy concentration
     buys_desc = sorted((s["bought"] for s in agg.values() if s["bought"] > 0),
@@ -124,9 +173,22 @@ def build_whales(rows, identities, enrich_top=50, out_top=150,
             within = sum(p for (e, p) in evs if e <= t0 + 48 * 3600)
             if within >= 50000:
                 flags.append("fresh")
+        if not s["address"]:
+            continue
+        uname = (identities.get(s["address"]) or {}).get("username")
+        if not uname and s["label"] is not None:
+            for m in s["members"]:
+                uname = (identities.get(m) or {}).get("username")
+                if uname:
+                    break
         res.append({
             "address": s["address"],
-            "username": (identities.get(s["address"]) or {}).get("username"),
+            "username": uname,
+            "label": s["label"],
+            "members": [a for a, _ in sorted(s["members"].items(),
+                                             key=lambda kv: -kv[1])[:20]]
+                       if s["label"] is not None else None,
+            "n_members": len(s["members"]) if s["label"] is not None else None,
             "net_prl": round(net, 2),
             "bought_prl": round(s["bought"], 2),
             "sold_prl": round(s["sold"], 2),
@@ -152,19 +214,38 @@ def build_whales(rows, identities, enrich_top=50, out_top=150,
 
     # chain-enrich the top candidates
     for rank, a in enumerate(res[:enrich_top]):
+        if not a["address"].startswith("prl1"):
+            continue                      # EVM-only entity: no Pearl balance
         info = address_info(a["address"])
         if not info:
             continue
         bal = _num(info.get("balance_grains")) / GRAINS
         ext_sent = _num(info.get("external_sent_grains"))
         mined = _num(info.get("mined_grains"))
+        # label entity: pool every Pearl member's balance / external sends
+        pooled_bal, pooled_sent, n_pooled = bal, ext_sent, 1
+        if a.get("label"):
+            for m in (a.get("members") or []):
+                if m == a["address"] or not m.startswith("prl1"):
+                    continue
+                if n_pooled >= 8:
+                    break
+                mi = address_info(m)
+                if mi:
+                    pooled_bal += _num(mi.get("balance_grains")) / GRAINS
+                    pooled_sent += _num(mi.get("external_sent_grains"))
+                    n_pooled += 1
+            ext_sent = pooled_sent
         a["chain"] = {
             "balance_prl": round(bal, 2),
             "hodl": ext_sent == 0,
-            "off_otc": bal > a["net_prl"] * 1.5 and mined == 0 and bal > 50000,
+            "off_otc": pooled_bal > a["net_prl"] * 1.5 and mined == 0 and pooled_bal > 50000,
             "label": info.get("label"),
             "is_miner": mined > 0,
         }
+        if a.get("label"):
+            a["chain"]["entity_balance_prl"] = round(pooled_bal, 2)
+            a["chain"]["n_pooled"] = n_pooled
 
         # ---- entity clustering (top slice only; precision-first) ----
         # claimed: members already attributed to a higher-ranked whale —
@@ -181,7 +262,10 @@ def build_whales(rows, identities, enrich_top=50, out_top=150,
                 a["cluster"] = cl
                 claimed.update(cl["addrs"])
                 claimed.update(c["address"] for c in cl["cold"])
-                a["chain"]["entity_balance_prl"] = cl["holdings_prl"]
+                # cluster holdings already include the primary's own balance;
+                # for a label entity add only the extras on top of the pool
+                a["chain"]["entity_balance_prl"] = round(
+                    cl["holdings_prl"] + (pooled_bal - bal), 2)
                 # entity-level hodl: external sends are (nearly) fully
                 # explained by transfers into the entity's own cold wallets
                 sent_prl = ext_sent / GRAINS

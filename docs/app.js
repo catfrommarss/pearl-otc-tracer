@@ -463,10 +463,17 @@ function renderWhales() {
     // see collector/cluster.py) when clustered; single-address otherwise
     let bal = ch.balance_prl != null ? fmtAmt(ch.balance_prl) : "—";
     const cl = b.cluster;
-    if (cl && ch.entity_balance_prl != null) {
-      const nLink = (cl.addrs || []).length + (cl.cold || []).length;
-      const coldSum = (cl.cold || []).reduce((s, c) => s + (c.balance_prl || 0), 0);
-      const tip = `本址 ${fmtAmt(ch.balance_prl)} + 关联 ${nLink} 地址`
+    // pooled holdings: a label entity (sub-wallets merged by the analyst's
+    // label) and/or an on-chain cluster (co-spend partners + cold wallets)
+    if (ch.entity_balance_prl != null && (cl || b.label)) {
+      const nCl = cl ? (cl.addrs || []).length + (cl.cold || []).length : 0;
+      const coldSum = cl ? (cl.cold || []).reduce((s, c) => s + (c.balance_prl || 0), 0) : 0;
+      const nLink = (b.label ? Math.max(0, (b.n_members || 1) - 1) : 0) + nCl;
+      const lab = (b.label || "").replace(/"/g, "&quot;");
+      const tip = (b.label
+          ? `标签「${lab}」合并 ${b.n_members} 地址（${ch.n_pooled || 1} 个 Pearl 地址计入余额）`
+          : `本址 ${fmtAmt(ch.balance_prl)}`)
+        + (nCl ? ` + 链上关联 ${nCl} 地址` : "")
         + (coldSum ? `（冷钱包 ${fmtAmt(coldSum)}）` : "");
       bal = `<span title="${tip}">${fmtAmt(ch.entity_balance_prl)}`
         + `<span class="cl-mark">+${nLink}址</span></span>`;

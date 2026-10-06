@@ -475,7 +475,8 @@ def main():
     whales = _read_json("whales.json", {})
     try:
         whales = build_whales(rows, identities, entities=entities,
-                              tx_cache=PRL_TXS_CACHE)
+                              tx_cache=PRL_TXS_CACHE,
+                              labels=_read_json("labels.json", {}))
         c = whales.get("concentration", {})
         n_cl = sum(1 for b in whales.get("buyers", []) if b.get("cluster"))
         print(f"  whales: {len(whales.get('buyers', []))} ranked · "
