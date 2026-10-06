@@ -16,7 +16,7 @@ const FULL_SCAN_CAP = 400;
 
 const F = {
   entities: {}, idents: {}, userIndex: {},
-  clusters: {}, whaleRank: {},
+  clusters: {}, whaleRank: {}, labels: {},
   txCache: new Map(), addrCache: new Map(),
   expanded: new Set(),
   cy: null, dataLoaded: false, focus: null,
@@ -27,7 +27,7 @@ const F = {
 const KIND_COLOR = {
   pearl_otc: "#4ade80", system: "#fbbf24", exchange: "#fbbf24",
   bridge: "#5b8def", bridge_treasury: "#5b8def", pool: "#c084fc",
-  cold: "#a7b4c7", unknown: "#9ca3af",
+  cold: "#a7b4c7", labeled: "#f472b6", unknown: "#9ca3af",
 };
 
 function fshort(a) {
@@ -60,14 +60,18 @@ async function flowInitData() {
     try { const r = await fetch(f, { cache: "no-store" }); return r.ok ? r.json() : null; }
     catch { return null; }
   };
-  const [ent, ids, cls, wh] = await Promise.all([
+  const [ent, ids, cls, wh, lbl] = await Promise.all([
     get("data/entities.json"), get("data/identities.json"),
-    get("data/clusters.json"), get("data/whales.json")]);
+    get("data/clusters.json"), get("data/whales.json"), get("data/labels.json")]);
   F.entities = ent || {}; F.idents = ids || {}; F.clusters = cls || {};
+  F.labels = lbl || {};
   ((wh && wh.buyers) || []).slice(0, 50).forEach((b, i) => {
     F.whaleRank[b.address] = { rank: i + 1, net: b.net_prl };
   });
   const ui = {};
+  // user labels are searchable by name too (first Pearl address wins)
+  for (const [a, l] of Object.entries(F.labels))
+    if (l && a.startsWith("prl1")) ui[l.toLowerCase()] = ui[l.toLowerCase()] || a;
   for (const [a, r] of Object.entries(F.idents))
     if (r && r.username) ui[r.username.toLowerCase()] = ui[r.username.toLowerCase()] || a;
   for (const [a, r] of Object.entries(F.entities)) {
@@ -115,6 +119,10 @@ function entOf(addr) {
   const e = F.entities[addr];
   if (e && e.label)
     return { id: "ent:" + e.label, label: e.label.replace(/^@/, ""), kind: e.kind || "system", addr };
+  // user's shared labels (data/labels.json): addresses sharing a label are
+  // the same entity to the analyst — merge them into one node
+  const lb = F.labels[addr];
+  if (lb) return { id: "lbl:" + lb, label: lb, kind: "labeled", addr };
   const id = F.idents[addr];
   if (id && id.username)
     return { id: "u:" + id.username, label: id.username, kind: "pearl_otc", addr };
@@ -415,11 +423,13 @@ function showTip(node, ev) {
   if (!tip) return;
   const k = node.data("kind");
   const kn = { pearl_otc: "OTC用户", system: "实体", bridge: "桥", pool: "矿池",
-               cold: "关联钱包", unknown: "未知" }[k] || k;
+               cold: "关联钱包", labeled: "自定义标签", unknown: "未知" }[k] || k;
+  const un = F.idents[node.data("addr")];
+  const unTxt = (k === "labeled" && un && un.username) ? ` · @${un.username}` : "";
   const bal = node.data("bal") || 0, recv = node.data("recv") || 0;
   const ret = recv > 0 ? Math.min(999, Math.round(bal / recv * 100)) : null;
   const rank = node.data("rank") || 0;
-  tip.innerHTML = `<b>${node.data("label")}</b><br>${kn} · 余额 ${fnum(bal)} PRL`
+  tip.innerHTML = `<b>${node.data("label")}</b><br>${kn}${unTxt} · 余额 ${fnum(bal)} PRL`
     + (ret != null ? ` · 留存 ${ret}%` : "")
     + (rank ? `<br>净累积榜 ⌗${rank} · 净买入 ${fnum(node.data("net"))} PRL` : "")
     + `<br><span class="muted">${fshort(node.data("addr"))} · 点击展开 / 双击看详情</span>`;
