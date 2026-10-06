@@ -9,3 +9,6 @@ collector/*_page.txt
 _offers_probe.json
 # brainstorming visual-companion mockups (transient)
 .superpowers/
+
+# SafeTrade chain-crawl tx summaries: ~20KB each, only NEW txs are ever needed → local only
+cache/st_txs/

@@ -5,6 +5,10 @@ Reuses the prlscan base + tx resolver from enrich.py.
 """
 from __future__ import annotations
 
+import json
+import os
+import time
+
 from common import get, cache_get, cache_put
 from enrich import PRLSCAN, GRAINS, _epoch, prl_tx
 
@@ -171,6 +175,282 @@ def safetrade_flows(since_epoch, big_grains, prl_tx_cache, max_pages=200):
         if stop or not cursor:
             break
     return out, info
+
+
+# ===== SafeTrade v2: rotating-change-chain custody (since 2026-09-15) =====
+#
+# On 2026-09-15 SafeTrade stopped using the labeled hot wallet. Since then
+# every exchange transaction has the same shape:
+#   inputs  = hundreds..thousands of swept deposit-address UTXOs (user and
+#             miner deposits, 80-300 PRL each) + the previous hot "change"
+#   outputs = exactly two: ONE user withdrawal and ONE change output to a
+#             brand-new address, which becomes the hot wallet for the next tx
+# So the hot wallet is a chain of fresh one-shot addresses. We follow it by
+# structure, not labels: any tx that spends a known chain address is an
+# exchange tx; its non-chain inputs are DEPOSITS; of its two outputs, the one
+# later spent by another exchange-signature tx (>= SWEEP_MIN inputs, or
+# co-spent with a chain address) is the next hot change, the other one is a
+# WITHDRAWAL. State (chain members, open tips, processed txs) persists in a
+# cache file so hourly runs crawl incrementally.
+SAFETRADE_V2_FROM = 1789430400          # 2026-09-15T00:00Z
+SWEEP_MIN = 20                          # inputs that mark an exchange sweep
+# A pure rotation hop is a 1-input / <=2-output tx (no sweep, no co-spend):
+# the 09-15 migration moved 10M through dozens of these. We keep following
+# such a hop only while the output is hot-float sized; a user who withdrew
+# a smaller amount and forwards it is not mistaken for the exchange.
+HOP_MIN_GRAINS = 100000 * 10 ** 8       # 100k PRL
+
+
+def _ex_tx(txid, st_cache):
+    """Slim summary of an exchange tx (a 1600-input body is ~200KB; we keep
+    per-address input sums + the two outputs). Cached on disk."""
+    c = cache_get(st_cache, txid)
+    if c is not None:
+        return c or None
+    try:
+        d = get(f"{PRLSCAN}/v1/txs/{txid}", kind="json", tries=4)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(d, dict) or "outputs" not in d:
+        cache_put(st_cache, txid, {})
+        return None
+    by_addr = {}
+    for i in d.get("inputs", []):
+        a = i.get("prev_address")
+        if a:
+            by_addr[a] = by_addr.get(a, 0) + (i.get("prev_value_grains") or 0)
+    # keep individual inputs >= 1k PRL (deposit candidates, hot shards);
+    # the thousands of 80-300 PRL miner payouts only matter in aggregate
+    big = {a: g for a, g in by_addr.items() if g >= 1000 * GRAINS}
+    small = [g for a, g in by_addr.items() if g < 1000 * GRAINS]
+    s = {
+        "time": _epoch(d.get("time") or d.get("block_time")),
+        "n_in": len(d.get("inputs", [])),
+        "in": dict(sorted(big.items(), key=lambda kv: -kv[1])),
+        "small_n": len(small), "small_sum": sum(small),
+        "outs": [[o.get("address"), o.get("value_grains") or 0]
+                 for o in d.get("outputs", []) if o.get("address")],
+    }
+    cache_put(st_cache, txid, s)
+    return s
+
+
+def _spends(addr, since_epoch=None, max_pages=1):
+    """[(txid, epoch)] where addr is spent (delta < 0), newest first."""
+    out, cursor = [], None
+    for _ in range(max_pages):
+        url = f"{PRLSCAN}/v1/addresses/{addr}/txs?limit=100"
+        if cursor:
+            url += "&cursor=" + cursor
+        try:
+            d = get(url, kind="json", tries=4)
+        except Exception:  # noqa: BLE001
+            break
+        items = d.get("items", []) if isinstance(d, dict) else []
+        stop = False
+        for it in items:
+            ep = _epoch(it.get("time"))
+            if since_epoch and ep and ep < since_epoch:
+                stop = True
+                break
+            if (it.get("delta_grains") or 0) < 0:
+                out.append((it.get("txid"), ep))
+        cursor = d.get("next_cursor") if isinstance(d, dict) else None
+        if stop or not cursor or not items:
+            break
+    return out
+
+
+def _load_state(path):
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:  # noqa: BLE001
+            pass
+    return {"members": {SAFETRADE: SAFETRADE_V2_FROM}, "queue": [SAFETRADE],
+            "pending": {}, "txs": {}}
+
+
+def _save_state(path, st):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(st, f, separators=(",", ":"))
+    os.replace(tmp, path)
+
+
+def safetrade_flows_v2(since_epoch, big_grains, prl_tx_cache, st_cache,
+                       state_path, max_new_txs=600):
+    """Crawl the rotating-change chain forward from its open tips and emit
+    deposits/withdrawals newer than since_epoch, in the same record shape as
+    safetrade_flows(). Returns (flows, info)."""
+    st = _load_state(state_path)
+    members = st["members"]                 # addr -> first-seen epoch
+    txs = st["txs"]                         # txid -> {t, dep:[...], w:[...]}
+    pending = st.get("pending", {})         # addr -> {t, g, txid}: unresolved outputs
+    queue = list(dict.fromkeys(st.get("queue", [])))
+    n_new = 0
+    now = time.time()
+
+    def resolve_output(oa, g, t, txid):
+        """Decide whether an exchange-tx output is the next hot change
+        (→ chain member, crawl on) or a user withdrawal. Unspent outputs
+        stay pending: a hot UTXO is spent within ~a day, a withdrawn balance
+        may sit — so an unspent output older than 2 days is a withdrawal."""
+        # exchange change always lands on a brand-new address; an output to
+        # an address with prior history (a user's wallet, e.g. Amber's) is a
+        # withdrawal no matter its size
+        ai = address_info(oa) or {}
+        if (ai.get("transfer_in_tx_count") or 0) > 1 or (ai.get("tx_count") or 0) > 2:
+            if txid in txs:
+                txs[txid]["w"].append([oa, g])
+            pending.pop(oa, None)
+            return
+        osp = _spends(oa, max_pages=1)
+        if osp:
+            s2 = _ex_tx(osp[0][0], st_cache)
+            is_hot = bool(s2) and (
+                s2["n_in"] >= SWEEP_MIN                                  # deposit sweep
+                or any(x in members for x in s2["in"] if x != oa)        # co-spent with chain
+                or (g >= HOP_MIN_GRAINS and s2["n_in"] < SWEEP_MIN       # hot-float sized hop /
+                    and len(s2["outs"]) <= 4))                           # shard merge or split
+            if is_hot:
+                members[oa] = t
+                queue.append(oa)
+            elif txid in txs:
+                txs[txid]["w"].append([oa, g])
+            pending.pop(oa, None)
+        elif now - t > 2 * 86400:
+            if txid in txs:
+                txs[txid]["w"].append([oa, g])
+            pending.pop(oa, None)
+        else:
+            pending[oa] = {"t": t, "g": g, "txid": txid}
+
+    # 0) repair pass: hot-float-sized "withdrawals" decided under earlier
+    #    (narrower) rules are re-judged. A 5-7M payout to a one-shot address
+    #    is a shard hop, not a user; once promoted, its downstream hops get
+    #    crawled so the shard's re-entry is no longer counted as a deposit.
+    judged = set(st.get("judged", []))      # re-judged once under the current rules
+    for txid, rec in list(txs.items()):
+        big = [(oa, g) for oa, g in rec["w"]
+               if g >= HOP_MIN_GRAINS and oa not in members and oa not in judged]
+        if not big:
+            continue
+        rec["w"] = [[oa, g] for oa, g in rec["w"]
+                    if not (g >= HOP_MIN_GRAINS and oa not in members and oa not in judged)]
+        for oa, g in big:
+            judged.add(oa)
+            resolve_output(oa, g, rec["t"], txid)   # re-appends if still a withdrawal
+    st["judged"] = sorted(judged)[-2000:]
+
+    # 1) outputs left unresolved by earlier runs (incl. the current hot tip)
+    for oa, p in list(pending.items()):
+        resolve_output(oa, p["g"], p["t"], p["txid"])
+
+    # 2) crawl forward from every chain address whose spend is unprocessed
+    while queue and n_new < max_new_txs:
+        a = queue.pop(0)
+        # the legacy hot wallet has ~7k pre-switch withdrawals: skip those
+        since = SAFETRADE_V2_FROM if a == SAFETRADE else None
+        spends = _spends(a, since_epoch=since, max_pages=3 if a == SAFETRADE else 1)
+        for txid, ep in spends:
+            if txid in txs:
+                continue
+            s = _ex_tx(txid, st_cache)
+            if not s:
+                continue
+            n_new += 1
+            t = s.get("time") or ep or 0
+            rec = {"t": t, "dep": [], "w": [],
+                   "dep_sum": s.get("small_sum", 0), "n_dep": s.get("small_n", 0)}
+            txs[txid] = rec
+            # inputs that are not chain members = deposits being swept.
+            # dep_sum counts EVERY swept input (miner payouts are 80-300 PRL
+            # each and only matter in aggregate); dep lists the big ones.
+            for ia, g in s["in"].items():
+                if ia in members:
+                    continue
+                rec["dep_sum"] += g
+                rec["n_dep"] += 1
+                if g >= big_grains:
+                    rec["dep"].append([ia, g])
+            for oa, g in s["outs"]:
+                if oa not in members and oa not in pending:
+                    resolve_output(oa, g, t, txid)
+
+    # prune: a shard spent long ago can never be an input again, and the
+    # radar only looks 21 days back — keeps the hourly-rewritten state small
+    st["queue"] = list(dict.fromkeys(queue))
+    st["pending"] = pending
+    st["members"] = {a: t for a, t in members.items()
+                     if a == SAFETRADE or (t or 0) >= since_epoch - 35 * 86400}
+    st["txs"] = {k: v for k, v in txs.items()
+                 if (v.get("t") or 0) >= since_epoch - 25 * 86400}
+    _save_state(state_path, st)
+
+    # ---- internal shard moves masquerading as flows ----
+    # A hot-wallet shard that was mis-read as a withdrawal (crawl order, or
+    # a merge shape we had not seen) shows up again as a DEPOSIT of the same
+    # amount from the same one-shot address when the exchange sweeps it. Pair
+    # those up (amount within 1% = fee), drop both sides, and promote the
+    # address to chain member so the pattern never recurs.
+    dep_by_addr = {}
+    for rec in txs.values():
+        for ia, g in rec["dep"]:
+            dep_by_addr.setdefault(ia, []).append(g)
+    internal = set()
+    for rec in txs.values():
+        for oa, g in rec["w"]:
+            for g2 in dep_by_addr.get(oa, []):
+                if abs(g2 - g) <= 0.01 * g:
+                    internal.add(oa)
+                    break
+    for oa in internal:
+        members.setdefault(oa, int(now))
+    if internal:
+        _save_state(state_path, st)
+
+    # ---- emit flows in the window ----
+    # A tx may have been processed before one of its inputs/outputs was
+    # recognised as a chain member (crawl order), so re-filter against the
+    # final member set here.
+    flows = []
+    dep_total = wd_total = 0
+    for txid, rec in txs.items():
+        t = rec.get("t") or 0
+        if t < since_epoch:
+            continue
+        dep_total += rec.get("dep_sum", 0) - sum(g for ia, g in rec["dep"] if ia in members)
+        wd_total += sum(g for oa, g in rec["w"] if oa not in members)
+        for ia, g in rec["dep"]:
+            if ia in members:
+                continue
+            f = {"time": t, "kind": "deposit", "prl": round(g / GRAINS, 4),
+                 "txid": txid, "counterparty": ia}
+            try:
+                origin = _pierce_deposit_addr(ia, g, t, prl_tx_cache)
+            except Exception:  # noqa: BLE001
+                origin = None
+            if origin and origin not in (ia, SAFETRADE):
+                f["counterparty"] = origin
+                f["via"] = ia
+            flows.append(f)
+        for oa, g in rec["w"]:
+            if g >= big_grains and oa not in members:
+                flows.append({"time": t, "kind": "withdraw",
+                              "prl": round(g / GRAINS, 4), "txid": txid,
+                              "counterparty": oa})
+    # hot float = the unspent pending change outputs (the current tips);
+    # count the output amounts themselves, not whole-address balances
+    hot = sum(p.get("g") or 0 for p in pending.values())
+    info = {"balance_grains": hot, "mode": "rotating-chain",
+            "chain_members": len(members), "tips": len(pending),
+            "txs_in_window": sum(1 for r in txs.values() if (r.get("t") or 0) >= since_epoch),
+            "external_received_grains": dep_total,     # all swept deposits in window
+            "external_sent_grains": wd_total}          # all withdrawals in window
+    return flows, info
 
 
 def _pierce_deposit_addr(cp, flow_grains, flow_time, tx_cache):

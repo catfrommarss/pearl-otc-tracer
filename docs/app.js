@@ -505,9 +505,12 @@ function renderSafetrade() {
   const flows = all.filter(f => num(f.prl) >= min && (!dir || f.kind === dir));
   const cnt = $("#st-count");
   if (cnt) cnt.textContent = `${fmt(flows.length, 0)} / ${fmt(all.length, 0)} 笔`;
-  const head = st.balance_prl != null
-    ? `<div class="sub" style="margin-bottom:8px">交易所余额 ${fmtAmt(st.balance_prl)} PRL · 历史净流入 ${fmtAmt((st.ext_received_prl || 0) - (st.ext_sent_prl || 0))} PRL</div>`
-    : "";
+  // v2 (since 2026-09-15): the exchange rotates through one-shot change
+  // addresses; balance = hot float on the open tips, received/sent = the
+  // crawl window's deposits/withdrawals (not lifetime totals).
+  const head = st.balance_prl == null ? "" : (st.mode === "rotating-chain"
+    ? `<div class="sub" style="margin-bottom:8px">热钱包浮动 ${fmtAmt(st.balance_prl)} PRL · 近21天 充值 ${fmtAmt(st.ext_received_prl || 0)} / 提现 ${fmtAmt(st.ext_sent_prl || 0)} PRL · 轮转链 ${fmt(st.chain_members || 0, 0)} 址</div>`
+    : `<div class="sub" style="margin-bottom:8px">交易所余额 ${fmtAmt(st.balance_prl)} PRL · 历史净流入 ${fmtAmt((st.ext_received_prl || 0) - (st.ext_sent_prl || 0))} PRL</div>`);
   if (!flows.length) {
     body.innerHTML = head + `<div class="muted" style="padding:12px 0">无符合条件的大额进出</div>`;
     return;

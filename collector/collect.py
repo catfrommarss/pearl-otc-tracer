@@ -39,6 +39,8 @@ IDENTITIES_CACHE = os.path.join(ROOT, "cache", "identities.json")
 PRL_TXS_CACHE = os.path.join(ROOT, "cache", "prl_txs")     # prlscan tx cache
 EVM_MATCH_CACHE = os.path.join(ROOT, "cache", "evm_match")  # usdc amount+time
 ENTITY_LABEL_CACHE = os.path.join(ROOT, "cache", "entity_labels")  # addr->label
+ST_TX_CACHE = os.path.join(ROOT, "cache", "st_txs")        # slim exchange tx summaries
+ST_CHAIN_STATE = os.path.join(ROOT, "cache", "safetrade_chain.json")  # crawl state
 
 
 def _write(name, obj):
@@ -517,11 +519,16 @@ def main():
         # very large moves; the frontend filters further up from there)
         since = (max((_iso_to_epoch(r.get("time")) or 0 for r in rows),
                      default=0)) - 21 * 86400
-        flows, st_info = chain.safetrade_flows(since, 10000 * enrich.GRAINS,
-                                               PRL_TXS_CACHE)
+        # v2: the labeled hot wallet went dormant on 2026-09-15; the exchange
+        # now rotates through a chain of one-shot change addresses. Crawl it.
+        flows, st_info = chain.safetrade_flows_v2(
+            since, 10000 * enrich.GRAINS, PRL_TXS_CACHE, ST_TX_CACHE,
+            ST_CHAIN_STATE)
         flows.sort(key=lambda f: -(f.get("time") or 0))
         safetrade = {
             "address": chain.SAFETRADE,
+            "mode": (st_info or {}).get("mode"),
+            "chain_members": (st_info or {}).get("chain_members"),
             "balance_prl": round(_num((st_info or {}).get("balance_grains"))
                                  / enrich.GRAINS, 2),
             "ext_received_prl": round(_num((st_info or {}).get("external_received_grains"))
