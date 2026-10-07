@@ -8,14 +8,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <meta http-equiv="cache-control" content="no-cache" />
-<link rel="stylesheet" href="style.css?v=t23" />
+<link rel="stylesheet" href="style.css?v=t25" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/layout-base@2.0.1/layout-base.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/cose-base@2.2.0/cose-base.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-fcose@2.2.0/cytoscape-fcose.js" defer></script>
-<script src="app.js?v=t24" defer></script>
-<script src="flow.js?v=t24" defer></script>
+<script src="app.js?v=t25" defer></script>
+<script src="flow.js?v=t25" defer></script>
 </head>
 <body>
 <header class="topbar">
@@ -84,6 +84,12 @@
       <select id="f-network"><option value="">全部网络</option>
         <option value="ARBITRUM">arb</option>
         <option value="BASE">base</option></select>
+      <select id="f-min" title="只看单笔 PRL 数量不低于该值的成交"><option value="">全部金额</option>
+        <option value="1000">≥ 1K PRL</option>
+        <option value="5000">≥ 5K PRL</option>
+        <option value="10000">≥ 10K PRL</option>
+        <option value="50000">≥ 50K PRL</option>
+        <option value="100000">≥ 100K PRL</option></select>
       <label class="chk"><input type="checkbox" id="f-resolved" /> 仅已追溯</label>
       <input id="f-from" type="date" title="起" />
       <input id="f-to" type="date" title="止" />

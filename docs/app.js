@@ -563,12 +563,14 @@ function filteredTrades() {
   const q = $("#f-search").value.trim().toLowerCase();
   const st = $("#f-status").value, sd = $("#f-side").value,
     nw = $("#f-network").value, ro = $("#f-resolved").checked;
+  const minEl = $("#f-min"), mn = minEl ? num(minEl.value) : 0;
   const from = $("#f-from").value ? new Date($("#f-from").value) : null;
   const to = $("#f-to").value ? new Date($("#f-to").value + "T23:59:59") : null;
   let rows = D.trades.filter(r => {
     if (st && r.status !== st) return false;
     if (sd && r.maker_side !== sd) return false;
     if (nw && r.network !== nw) return false;
+    if (mn && num(r.prl_amount) < mn) return false;
     if (ro && !((r.seller_prl || r.seller_evm) && (r.buyer_prl || r.buyer_evm)))
       return false;
     if (from || to) {
@@ -978,9 +980,18 @@ $("#btn-back").onclick = () => {
   if (history.length > 1) history.back();
   else location.hash = "addresses";
 };
-["f-search", "f-status", "f-side", "f-network", "f-resolved", "f-from", "f-to"]
+["f-search", "f-status", "f-side", "f-network", "f-min", "f-resolved", "f-from", "f-to"]
   .forEach(id => $("#" + id).addEventListener("input",
     () => { tState.page = 0; renderTrades(); }));
+// trades min-amount filter: remembered per viewer
+(() => {
+  const el = $("#f-min");
+  if (!el) return;
+  try { const s = localStorage.getItem("t-min"); if (s) el.value = s; } catch {}
+  el.addEventListener("change", () => {
+    try { localStorage.setItem("t-min", el.value); } catch {}
+  });
+})();
 ["a-search", "a-chain", "a-sort"].forEach(id =>
   $("#" + id).addEventListener("input", () => { aState.page = 0; renderAddresses(); }));
 // SafeTrade flow feed: free-amount + direction filter (persisted)

@@ -2,8 +2,12 @@ name: refresh
 
 on:
   schedule:
-    # hourly, offset off the top of the hour to dodge peak scheduling load
-    - cron: "17 * * * *"
+    # GitHub drops most scheduled triggers on busy public repos: the old
+    # hourly cron actually ran only ~3-6 times a day. Fire every 15 min on
+    # off-peak minutes; the gate step below skips any scheduled run that lands
+    # within 50 min of the last refresh, so the effective cadence approaches
+    # hourly without refreshing more often than that.
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
     inputs:
       backfill:
@@ -25,15 +29,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Gate (skip if refreshed < 50 min ago)
+        id: gate
+        run: |
+          age=$(python3 collector/gate.py)
+          echo "last refresh ${age} min ago (event: ${{ github.event_name }})"
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$age" -lt 50 ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
         with:
           python-version: "3.12"
           cache: pip
 
       - name: Install deps
+        if: steps.gate.outputs.run == 'true'
         run: pip install -r collector/requirements.txt
 
       - name: Collect + resolve
+        if: steps.gate.outputs.run == 'true'
         run: |
           if [ "${{ inputs.backfill }}" = "true" ]; then
             python collector/collect.py --backfill --workers 6
@@ -42,6 +60,7 @@ jobs:
           fi
 
       - name: Commit snapshot
+        if: steps.gate.outputs.run == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
