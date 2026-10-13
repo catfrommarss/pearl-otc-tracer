@@ -295,8 +295,10 @@ def enrich_live(live_rows, known_evm=None):
     """Recover buyer/seller addresses for live rows (post-redesign).
 
     PRL leg (authoritative): match to the OTC fee-address funnel on prlscan
-    by exact gross amount + nearest time → seller_prl / buyer_prl. Cheap
-    (cached prlscan), so it runs on the FULL backlog every time.
+    by exact gross amount + time → seller_prl / buyer_prl. One on-chain
+    release settles exactly one feed row, so rows and releases are paired
+    globally, nearest-in-time first, each release used once. Cheap (cached
+    prlscan), so it runs on the FULL backlog every time.
     USDC leg (heuristic): global amount+time match on Arbitrum, accepted
     when the candidate is UNIQUE — or, among several candidates, exactly
     ONE involves an EVM address already seen in resolved trades (the
@@ -304,42 +306,66 @@ def enrich_live(live_rows, known_evm=None):
     lookups are BUDGET-CAPPED per run (USDC_BUDGET); backlog drains over
     subsequent runs. Everything attached is flagged inferred:true."""
     USDC_BUDGET = 60  # max RPC-hitting usdc matches per run
+    PRL_KEYS = ("seller_prl", "buyer_prl", "escrow_prl", "release_txid",
+                "deposit_txid")
+    # Releases already shared by several rows: earlier runs matched rows one
+    # at a time, so two same-size trades minutes apart could both grab
+    # whichever release existed at run time (the second one's release was
+    # often not on chain yet). Those rows get re-decided below.
+    by_rel = {}
+    for r in live_rows:
+        if r.get("release_txid"):
+            by_rel.setdefault(r["release_txid"], []).append(r)
+    shared = [r for grp in by_rel.values() if len(grp) > 1 for r in grp]
     todo = [r for r in live_rows if not r.get("seller_prl")
             or not r.get("seller_evm")]
-    if not todo:
+    if not todo and not shared:
         return
     # transfers already attributed to a settlement THIS run — prevents one
     # on-chain transfer from being assigned to two same-amount rows
     consumed = set()
     os.makedirs(PRL_TXS_CACHE, exist_ok=True)
     os.makedirs(EVM_MATCH_CACHE, exist_ok=True)
-    since = min(_iso_to_epoch(r["time"]) or 0 for r in todo) - 3600
-    print(f"  enriching {len(todo)} live rows (PRL funnel since {since}) ...",
-          flush=True)
+    since = min(_iso_to_epoch(r["time"]) or 0 for r in todo + shared) - 3600
+    print(f"  enriching {len(todo)} live rows, re-deciding {len(shared)} rows "
+          f"on shared releases (PRL funnel since {since}) ...", flush=True)
     by_grains, _ = enrich.build_pearl_index(since, PRL_TXS_CACHE)
 
-    prl_ok = evm_ok = 0
+    # --- PRL leg: global nearest-first pairing, each release used once ---
+    for r in shared:
+        for k in PRL_KEYS:
+            r[k] = None
+    used = {r["release_txid"] for r in live_rows if r.get("release_txid")}
+    need = [r for r in live_rows if not r.get("seller_prl")]
+    pairs = []
+    for i, r in enumerate(need):
+        ep = _iso_to_epoch(r.get("time")) or 0
+        g = round(_num(r.get("prl_amount")) * enrich.GRAINS)
+        for c in by_grains.get(g, []):
+            if (c.get("time") is None or c.get("release_txid") in used
+                    or not (c.get("seller_prl") and c.get("buyer_prl"))):
+                continue
+            d = abs(c["time"] - ep)
+            if d <= 1800:
+                pairs.append((d, i, c))
+    pairs.sort(key=lambda p: (p[0], p[1]))
+    paired = set()
+    prl_ok = 0
+    for d, i, c in pairs:
+        if i in paired or c["release_txid"] in used:
+            continue
+        r = need[i]
+        for k in PRL_KEYS:
+            r[k] = c.get(k)
+        r["inferred"] = True
+        used.add(c["release_txid"])
+        paired.add(i)
+        prl_ok += 1
+
+    evm_ok = 0
     usdc_spent = 0
     for r in todo:
         ep = _iso_to_epoch(r.get("time"))
-        # --- PRL leg (full backlog): exact gross grains + nearest time ---
-        if not r.get("seller_prl"):
-            g = round(_num(r.get("prl_amount")) * enrich.GRAINS)
-            best, bd = None, 10 ** 9
-            for c in by_grains.get(g, []):
-                if c.get("time") is None:
-                    continue
-                d = abs(c["time"] - (ep or 0))
-                if d < bd:
-                    bd, best = d, c
-            if best and bd <= 1800 and best.get("seller_prl") and best.get("buyer_prl"):
-                r["seller_prl"] = best["seller_prl"]
-                r["buyer_prl"] = best["buyer_prl"]
-                r["escrow_prl"] = best.get("escrow_prl")
-                r["release_txid"] = best.get("release_txid")
-                r["deposit_txid"] = best.get("deposit_txid")
-                r["inferred"] = True
-                prl_ok += 1
         # --- USDC leg: cached results are FREE; only RPC hits are budgeted.
         # The budget gate must never block cache reads — an earlier version
         # gated the whole block on usdc_spent, so once 60 RPC queries were
@@ -380,7 +406,7 @@ def enrich_live(live_rows, known_evm=None):
                 if known_evm is not None and m.get("n_candidates") == 1:
                     known_evm.add(m["seller_evm"])
                     known_evm.add(m["buyer_evm"])
-    print(f"  enriched PRL {prl_ok} · USDC(unique) {evm_ok} "
+    print(f"  enriched PRL {prl_ok} (re-decided {len(shared)}) · USDC(unique) {evm_ok} "
           f"(usdc budget spent {usdc_spent}/{USDC_BUDGET}) of {len(todo)}",
           flush=True)
 

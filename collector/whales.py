@@ -19,7 +19,7 @@ from __future__ import annotations
 import datetime
 import re
 
-from enrich import GRAINS, FEE_ADDR
+from enrich import GRAINS, FEE_ADDRS
 from chain import address_info
 from cluster import cluster_entity
 
@@ -202,7 +202,7 @@ def build_whales(rows, identities, enrich_top=50, out_top=150,
 
     # addresses that clustering must never merge into a whale's entity:
     # every OTC participant/escrow, the fee funnel, and labeled entities.
-    no_merge = {FEE_ADDR}
+    no_merge = set(FEE_ADDRS)
     for r in rows:
         for k in ("seller_prl", "buyer_prl", "escrow_prl"):
             if r.get(k):

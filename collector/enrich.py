@@ -22,6 +22,17 @@ from common import get, cache_get, cache_put
 
 PRLSCAN = "https://api.prlscan.com"
 FEE_ADDR = "prl1ppf959pzmduxmxf2t7hnlhm4gyzfve4pzs3s840lzh0stvanfs8qskqlngq"
+# OTC v2 (from 2026-10-08 ~08:00Z): escrows moved to prl1z… addresses and a
+# release pays the buyer 98% plus exactly 1% to each of two fixed addresses
+# (the v1 address above stopped receiving). FEE_ADDR_V2 only ever receives
+# those 1% cuts, so its history is the v2 release funnel. FEE_ADDR_V2B also
+# gets 1% per release but is an older, active wallet (it has bought on the
+# OTC itself), so it is excluded from outputs but never used as a funnel.
+FEE_ADDR_V2 = "prl1pu6x5e5z7svtu03xtazz3d9xrwm4qgfphatv94fd9t3wy79ds8qrq8x6km9"
+FEE_ADDR_V2B = "prl1pq3mn238ug5cj32c6tf8hy9u5582pg8a0t2geh9qj74ktlfqp8alsddygmv"
+FEE_ADDRS = (FEE_ADDR, FEE_ADDR_V2, FEE_ADDR_V2B)
+# v2 deposits also pay 0.01 PRL here; never the seller's change
+DEPOSIT_MARKER = "prl1pt8e88h9m5j26u04vw7dgv4zxp2y68fy5wx82g78465lfsvprsmss2962e4"
 GRAINS = 100_000_000  # 1 PRL = 1e8 grains (verified vs archive ground truth)
 
 
@@ -66,33 +77,38 @@ def prl_tx(txid, cache_dir):
 
 
 def fee_funnel(since_epoch=None, max_pages=400):
-    """All OTC release txs (newest→oldest) from the fee address history.
+    """All OTC release txs (newest→oldest) from the fee address histories
+    (v1 address until 2026-10-08, v2 address after).
 
     Returns [{txid, time, fee_grains}] for releases with time >= since."""
-    out = []
-    cursor = None
-    for _ in range(max_pages):
-        url = f"{PRLSCAN}/v1/addresses/{FEE_ADDR}/txs?limit=50"
-        if cursor:
-            url += "&cursor=" + cursor
-        d = get(url, kind="json", tries=4)
-        items = d.get("items", []) if isinstance(d, dict) else []
-        if not items:
-            break
-        stop = False
-        for it in items:
-            ep = _epoch(it.get("time"))
-            if since_epoch and ep and ep < since_epoch:
-                stop = True
-                continue
-            # only incoming fee receipts (releases), not the rare outflows
-            if (it.get("received_grains") or 0) <= 0:
-                continue
-            out.append({"txid": it.get("txid"), "time": ep,
-                        "fee_grains": it.get("received_grains")})
-        cursor = d.get("next_cursor") if isinstance(d, dict) else None
-        if stop or not cursor:
-            break
+    out, seen = [], set()
+    for funnel_addr in (FEE_ADDR, FEE_ADDR_V2):
+        cursor = None
+        for _ in range(max_pages):
+            url = f"{PRLSCAN}/v1/addresses/{funnel_addr}/txs?limit=50"
+            if cursor:
+                url += "&cursor=" + cursor
+            d = get(url, kind="json", tries=4)
+            items = d.get("items", []) if isinstance(d, dict) else []
+            if not items:
+                break
+            stop = False
+            for it in items:
+                ep = _epoch(it.get("time"))
+                if since_epoch and ep and ep < since_epoch:
+                    stop = True
+                    continue
+                # only incoming fee receipts (releases), not the rare outflows
+                if (it.get("received_grains") or 0) <= 0:
+                    continue
+                if it.get("txid") in seen:
+                    continue
+                seen.add(it.get("txid"))
+                out.append({"txid": it.get("txid"), "time": ep,
+                            "fee_grains": it.get("received_grains")})
+            cursor = d.get("next_cursor") if isinstance(d, dict) else None
+            if stop or not cursor:
+                break
     return out
 
 
@@ -106,11 +122,15 @@ def resolve_release(release_txid, cache_dir):
     escrow = esc_in.get("prev_address")
     gross_grains = esc_in.get("prev_value_grains")
     deposit_txid = esc_in.get("prev_txid")
-    # buyer = largest release output not going to the fee address
+    # buyer = largest release output not going to a fee address. Which fee
+    # addresses apply depends on the release version: excluding the v2 pair
+    # from v1 releases would hide a buyer that happens to be FEE_ADDR_V2B.
+    outs = {o.get("address") for o in rel["outputs"]}
+    fees = {FEE_ADDR_V2, FEE_ADDR_V2B} if FEE_ADDR_V2 in outs else {FEE_ADDR}
     buyer = None
     best = -1
     for o in rel["outputs"]:
-        if o.get("address") == FEE_ADDR:
+        if o.get("address") in fees:
             continue
         v = o.get("value_grains") or 0
         if v > best:
@@ -119,7 +139,8 @@ def resolve_release(release_txid, cache_dir):
     seller = None
     dep = prl_tx(deposit_txid, cache_dir) if deposit_txid else None
     if dep:
-        change = [o for o in dep["outputs"] if o.get("address") != escrow]
+        change = [o for o in dep["outputs"]
+                  if o.get("address") not in (escrow, DEPOSIT_MARKER)]
         change.sort(key=lambda o: o.get("value_grains") or 0, reverse=True)
         if change:
             seller = change[0].get("address")
