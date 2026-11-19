@@ -199,11 +199,37 @@ SWEEP_MIN = 20                          # inputs that mark an exchange sweep
 # such a hop only while the output is hot-float sized; a user who withdrew
 # a smaller amount and forwards it is not mistaken for the exchange.
 HOP_MIN_GRAINS = 100000 * 10 ** 8       # 100k PRL
+# Since 2026-11-11 SafeTrade pre-splits the hot float into hundreds..thousands
+# of identical 500 PRL UTXOs for parallel withdrawals, and later sweeps unused
+# chunks back in (1600-input consolidations -> ~800k PRL change -> hot chain).
+SPLIT_DENOM_MAX = 10000 * GRAINS        # upper bound for repeated pool chunks
+SPLIT_OUT_MIN = 3                       # >=3 identical outputs = pre-split tx
+POOL_IN_MIN = 20                        # >=20 identical inputs = pool sweep-in
+ST_RULE_VER = 3                         # bump to re-judge historical big outs
+_INTERNAL_POOL = "__INTERNAL_POOL__"
+
+
+def _split_denoms(outs, max_grains=SPLIT_DENOM_MAX):
+    """Return output amounts (grains) that look like a bulk UTXO pre-split
+    pool (e.g. hundreds of identical 500 PRL chunks)."""
+    if len(outs) < SPLIT_OUT_MIN:
+        return set()
+    counts = {}
+    for _, g in outs:
+        if 0 < g < max_grains:
+            counts[g] = counts.get(g, 0) + 1
+    return {g for g, c in counts.items() if c >= SPLIT_OUT_MIN}
+
+
+def _is_split_tx(s, max_grains=SPLIT_DENOM_MAX):
+    return bool(s) and ((s.get("split_out_n") or 0) >= SPLIT_OUT_MIN
+                        or bool(_split_denoms(s.get("outs", []), max_grains)))
 
 
 def _ex_tx(txid, st_cache):
-    """Slim summary of an exchange tx (a 1600-input body is ~200KB; we keep
-    per-address input sums + the two outputs). Cached on disk."""
+    """Slim summary of an exchange tx (a 1600-input or 2000-output body is
+    ~200KB; we keep per-address input sums >= 1k PRL and non-split outputs,
+    folding repeated pool chunks into counters). Cached on disk."""
     c = cache_get(st_cache, txid)
     if c is not None:
         return c or None
@@ -219,18 +245,38 @@ def _ex_tx(txid, st_cache):
         a = i.get("prev_address")
         if a:
             by_addr[a] = by_addr.get(a, 0) + (i.get("prev_value_grains") or 0)
+    # Detect bulk pre-split pool chunks swept back in (e.g. 1489 x 500 PRL) so
+    # internal pool recycles are not counted as external deposits.
+    in_counts = {}
+    for g in by_addr.values():
+        if 0 < g < SPLIT_DENOM_MAX:
+            in_counts[g] = in_counts.get(g, 0) + 1
+    pool_in_denoms = {g for g, cnt in in_counts.items() if cnt >= POOL_IN_MIN}
+    pool_in = [g for g in by_addr.values() if g in pool_in_denoms]
     # keep individual inputs >= 1k PRL (deposit candidates, hot shards);
     # the thousands of 80-300 PRL miner payouts only matter in aggregate
-    big = {a: g for a, g in by_addr.items() if g >= 1000 * GRAINS}
-    small = [g for a, g in by_addr.items() if g < 1000 * GRAINS]
+    big = {a: g for a, g in by_addr.items()
+           if g >= 1000 * GRAINS and g not in pool_in_denoms}
+    small = [g for g in by_addr.values()
+             if g < 1000 * GRAINS and g not in pool_in_denoms]
+    raw_outs = [[o.get("address"), o.get("value_grains") or 0]
+                for o in d.get("outputs", []) if o.get("address")]
+    sp_denoms = _split_denoms(raw_outs)
+    outs = [o for o in raw_outs if o[1] not in sp_denoms]
+    sp_outs = [o[1] for o in raw_outs if o[1] in sp_denoms]
     s = {
         "time": _epoch(d.get("time") or d.get("block_time")),
         "n_in": len(d.get("inputs", [])),
         "in": dict(sorted(big.items(), key=lambda kv: -kv[1])),
         "small_n": len(small), "small_sum": sum(small),
-        "outs": [[o.get("address"), o.get("value_grains") or 0]
-                 for o in d.get("outputs", []) if o.get("address")],
+        "outs": outs,
     }
+    if pool_in:
+        s["pool_in_n"] = len(pool_in)
+        s["pool_in_sum"] = sum(pool_in)
+    if sp_outs:
+        s["split_out_n"] = len(sp_outs)
+        s["split_out_sum"] = sum(sp_outs)
     cache_put(st_cache, txid, s)
     return s
 
@@ -314,7 +360,8 @@ def safetrade_flows_v2(since_epoch, big_grains, prl_tx_cache, st_cache,
                 s2["n_in"] >= SWEEP_MIN                                  # deposit sweep
                 or any(x in members for x in s2["in"] if x != oa)        # co-spent with chain
                 or (g >= HOP_MIN_GRAINS and s2["n_in"] < SWEEP_MIN       # hot-float sized hop /
-                    and len(s2["outs"]) <= 4))                           # shard merge or split
+                    and (len(s2["outs"]) <= 4                            # shard merge or split
+                         or _is_split_tx(s2, big_grains))))
             if is_hot:
                 members[oa] = t
                 queue.append(oa)
@@ -332,7 +379,11 @@ def safetrade_flows_v2(since_epoch, big_grains, prl_tx_cache, st_cache,
     #    (narrower) rules are re-judged. A 5-7M payout to a one-shot address
     #    is a shard hop, not a user; once promoted, its downstream hops get
     #    crawled so the shard's re-entry is no longer counted as a deposit.
-    judged = set(st.get("judged", []))      # re-judged once under the current rules
+    if st.get("rule_ver") != ST_RULE_VER:
+        judged = set()
+        st["rule_ver"] = ST_RULE_VER
+    else:
+        judged = set(st.get("judged", []))  # re-judged once under current rules
     for txid, rec in list(txs.items()):
         big = [(oa, g) for oa, g in rec["w"]
                if g >= HOP_MIN_GRAINS and oa not in members and oa not in judged]
@@ -376,7 +427,10 @@ def safetrade_flows_v2(since_epoch, big_grains, prl_tx_cache, st_cache,
                 rec["n_dep"] += 1
                 if g >= big_grains:
                     rec["dep"].append([ia, g])
+            split_g = _split_denoms(s["outs"], big_grains)
             for oa, g in s["outs"]:
+                if g in split_g:
+                    continue  # internal UTXO pre-split pool (legacy cache guard)
                 if oa not in members and oa not in pending:
                     resolve_output(oa, g, t, txid)
 
@@ -418,6 +472,7 @@ def safetrade_flows_v2(since_epoch, big_grains, prl_tx_cache, st_cache,
     # final member set here.
     flows = []
     dep_total = wd_total = 0
+    promoted = False
     for txid, rec in txs.items():
         t = rec.get("t") or 0
         if t < since_epoch:
@@ -430,9 +485,17 @@ def safetrade_flows_v2(since_epoch, big_grains, prl_tx_cache, st_cache,
             f = {"time": t, "kind": "deposit", "prl": round(g / GRAINS, 4),
                  "txid": txid, "counterparty": ia}
             try:
-                origin = _pierce_deposit_addr(ia, g, t, prl_tx_cache)
+                origin = _pierce_deposit_addr(ia, g, t, prl_tx_cache,
+                                              st_cache=st_cache)
             except Exception:  # noqa: BLE001
                 origin = None
+            if origin == _INTERNAL_POOL:
+                # One-shot consolidation of swept pre-split pool chunks
+                # (e.g. 1599 x 500 PRL -> ~800k PRL -> back into main hot).
+                members[ia] = t
+                dep_total -= g
+                promoted = True
+                continue
             if origin and origin not in (ia, SAFETRADE):
                 f["counterparty"] = origin
                 f["via"] = ia
@@ -442,6 +505,9 @@ def safetrade_flows_v2(since_epoch, big_grains, prl_tx_cache, st_cache,
                 flows.append({"time": t, "kind": "withdraw",
                               "prl": round(g / GRAINS, 4), "txid": txid,
                               "counterparty": oa})
+    if promoted:
+        st["members"] = members
+        _save_state(state_path, st)
     # hot float = the unspent pending change outputs (the current tips);
     # count the output amounts themselves, not whole-address balances
     hot = sum(p.get("g") or 0 for p in pending.values())
@@ -453,9 +519,11 @@ def safetrade_flows_v2(since_epoch, big_grains, prl_tx_cache, st_cache,
     return flows, info
 
 
-def _pierce_deposit_addr(cp, flow_grains, flow_time, tx_cache):
+def _pierce_deposit_addr(cp, flow_grains, flow_time, tx_cache, st_cache=None):
     """If cp is an exchange deposit intermediary (small pure forwarder),
-    return the address that funded it (the real depositor), else None."""
+    return the address that funded it (the real depositor), else None.
+    When st_cache is provided and cp is a one-shot consolidation of the
+    exchange's own pre-split UTXO pool, returns _INTERNAL_POOL."""
     info = address_info(cp)
     if not info or info.get("label"):
         return None
@@ -493,6 +561,16 @@ def _pierce_deposit_addr(cp, flow_grains, flow_time, tx_cache):
         match = sorted(inbound, key=lambda x: -(x[1] or 0))[:1]
     if not match:
         return None
+    if (st_cache is not None
+            and (info.get("transfer_in_tx_count") or 0) <= 1
+            and (info.get("tx_count") or 0) <= 2):
+        ex = _ex_tx(match[0][0], st_cache)
+        if ex:
+            if (ex.get("pool_in_n") or 0) >= POOL_IN_MIN:
+                return _INTERNAL_POOL
+            for a in ex.get("in", {}):
+                if a and a not in (cp, SAFETRADE):
+                    return a
     tx = prl_tx(match[0][0], tx_cache)
     if not tx:
         return None
